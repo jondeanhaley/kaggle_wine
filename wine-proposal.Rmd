@@ -1,0 +1,29 @@
+---
+title: "Data Analysis Project Proposal"
+author: "STAT 420, Summer 2017, Eloise Rosen (eloiser2), Jondean Haley, Nilesh Malpekar"
+date: '7/17/2017'
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+---
+
+### Dataset Description And Background
+(Description of the dataset. You do not necessarily have to list all the variables, but at least mention those of greatest importance.After reading the proposal, a reader should have a good understanding of your dataset without needing to reference the data itself or other documentation.)
+
+(Background information on the dataset, including specific citation of its source)
+
+
+### Statement
+(A tentative title for the project)
+
+(A brief statement of the business, science, research, or personal interest you have in the dataset that you hope to explore)
+
+### Data
+
+```{r}
+#Evidence that the data can be loaded into R. Load the data, and print the first few values of the response variable as evidence.
+
+data <- read.table(unz("winemag-data_first150k.csv.zip", "winemag-data_first150k.csv"), nrows=10, header=T, quote="\"", sep=",")
+head(data$points, n=10)
+```
