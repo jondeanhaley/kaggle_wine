@@ -1,0 +1,323 @@
+---
+title: "Kaggle Wine Analysis"
+date: "July 4, 2017"
+output: html_document
+---
+
+
+**The Exploration**
+
+- Overall strategy to date involves:
+    - transform the response "points" since bounded in [0,100] and range is [80,100]  Currently using logit.
+    - transform the "price" predictor using log or inverse or a power of the inverse (TBD by CV), or any combination of these.  Cp and BIC were used to determine that log and inverse price together (additive) make an efficient model.  These have been integrated with each other and categoricals, but CV has not yet been done.
+    - currently have a 2 topic LDA projection of the "descriptions" and using topic1 probablity in the regression as an additive predictor.
+    - currently generate a "sentiment" numeric predictor using a sentiment classifer for the "descriptions".  This is an additive predictor.
+    - currently clustering price into (low, medium, high) with 3 clusters being optimal, as determined by Scree plot.  This categorical appears to be powerful when integrated with the price transforms.  This is intuitive: wines cluster within price bands, with high point wines within each price cluster.
+    - resulting numerical predictors: log(price), inverse(price), any inverse power of price (TBD), sentiment, topic1 probability
+    - resulting categorical predictors: price_cluster (low, med, high), sentiment is a small int and could be explored as a factor.
+    
+**More Notes and Possible Extensions**
+
+- Since the response is bounded in [0,100] and in the data the range is [80,100], we need to tranform the response into a continuous variable for regression.  Really, we could model this as a 21 class classification, but we need a regression.  I explored logit transformation here.  It's not bad.  If we could tweak it for the heavy distribution toward 80, to spread these out a bit, it may be worth it.  Probit is another possibility to explore.
+- A grid of models was explored using log(price), price, inverse price, sqrt(price) and price^1/3.  regsubsets of the leap package was used.  The best (additive) model uses log(price) and inverse price (best by Cp).  
+- the regression via glm shows heavy tails on the errors in the QQ plot.  The good news is that we have 137k data points, and so this offers us an opportunity to argue that by the CLT the heavy tails do not obviate our use of t and F tests.  We can explore the pitfalls of heavy tails and perhaps try to use the "heavy" package to do a glm with heavy tails
+- We should research incorporation of country or variety, but the levels are large.  Perhaps we could bin countries into continents?
+- Samples of the descriptions for "good" and "bad" wines are given below.  One can see sentiment in the vocabularies, promising for LDA separation and sentiment analysis.
+- A scree plot was generated to find optimal cluster count for price = 3.  So low, medium and high price wine clusters were formed and cluster was introduced as a new categorical predictor.  Intuitively, within each price cluster, price and points will be correlated positively.
+- models get more promising down the page, with the last few to taken into CV.  
+
+
+**Pros of this set**
+
+Why this is a good data set and problem:
+
+- we need to transform both predictors and response, so more interesting than plain vanilla.  We can dig into research of optimal transforms using cross validation over a grid of models.
+- we can discuss the CLT and heavy tails and justify continued use of t and F tests, or we can look at the "heavy" package or robust regression to model with heavy tailed errors.  This is a "pro" since more interesting
+- chance to use LDA topic modeling and sentiment analysis, very interesting
+- 137k observations but tractable in R laptop memory
+- it looks like clustering 3 price bands is going to pay off
+
+**TODO**
+
+- clean all of this up to a nice visual Exploration section and reuse into Methods and Discussion
+- decide on optimal response transform
+- could try the various possible sentiment lexicons: either "afinn", "bing", "nrc", or "loughran".  Bing was used here.  NRC has a disgust binary sentiment, worth a look.
+- tune the LDA and/or verify separation and alignment with positive/negative sentiment.  Experiment with a 3rd topic distribution perhaps. 
+- verify the sentiment engine, that scores correlate with review sentiments as we read them
+- perhaps functions and unit tests to clean up code and prevent regression bugs as complexity grows.
+- decide whether to purse country, continent, variety categoricals
+- decide on optimal model via CV (cv.glm)
+    - When we split off test from training, do LDA on the full training set (not per CV) just once, or repeat per CV partitioning (should be done, but will take some time) 
+    - Use posterior(lda, documentTermMatrix of test) (see ?LDA) to generate topic1 probabilities on the test set.  
+    - Run the test set through the sentiment engine to get sentiment for the test set.
+
+
+```{r,  echo = FALSE, eval = FALSE}
+### INSTALLATION of packages, if necessary for evaluation:
+install.packages("ggplot2")
+install.packages("readr")
+install.packages("fpc")
+install.packages("boot")
+install.packages("leaps")
+install.packages("topicmodels")
+install.packages("tidytext")
+install.packages("magrittr")
+library(devtools)
+install_github("juliasilge/tidytext")
+install.packages("dplyr")
+install.packages("tidyr")
+```
+
+```{r, echo=FALSE}
+### LOAD LIBRARIES:
+library(ggplot2)
+library(readr)
+library(fpc)
+library(boot)
+library(leaps)
+library(topicmodels)
+library(tidytext)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+```
+
+```{r, echo=FALSE}
+### LOAD data:
+wine = read.csv("winemag-data_first150k.csv")
+set.seed(1234)
+```
+
+```{r}
+### EXPLORATION
+head(wine)
+range(wine$points)
+pts = data.frame(wine$points)
+ggplot(data=pts, aes(pts)) + stat_count(fill="green", colour="blue") + geom_density(color="blue")
+```
+
+```{r}
+### a look at high point wine descriptions
+sample(wine$description[wine$points > 95], size = 10)
+```
+
+```{r}
+### a look at low point wine descriptions
+sample(wine$description[wine$points < 83], size = 10)
+```
+
+```{r}
+### CLEANING
+## project into (points, price, description), remove all rows with any NA
+nrow(wine)
+sum(complete.cases(wine))  ##looking at data, seems due to large # of NA in region columns
+sum(complete.cases(data.frame(wine[, c("points","price", "description")])))
+wine_projection = wine[complete.cases(wine[, c("points","price", "description")]), c("points","price", "description")]
+corr(as.matrix(wine_projection[,c("price","points")]))
+length(levels(wine$country))
+length(levels(wine$variety))
+```
+
+```{r}
+logit_transform = function(points){
+   log((points - 79.95) / (100.05 - points))
+}
+logit_points = logit_transform(wine$points)
+range(logit_points)
+```
+```{r}
+wine_projection = data.frame(wine_projection, logit_points = logit_transform(wine_projection$points))
+head(wine_projection)
+mod = lm(logit_points~price, data=wine_projection)
+plot(mod)
+```
+
+```{r}
+mod2 = lm(logit_points~log(price)+sqrt(price), data=wine_projection)
+plot(mod2)
+summary(mod2)
+```
+```{r}
+ggplot(data=wine_projection, aes(logit_points)) + stat_count(fill="green", colour="blue") + geom_density(color="blue")
+```
+
+```{r}
+wine_projection = data.frame(wine_projection, inv_price = 1/wine_projection$price, price13 = wine_projection$price^(1/3) )
+head(wine_projection)
+```
+```{r}
+grid = regsubsets(logit_points~.+log(price)+sqrt(price)-points-description, data=wine_projection, nvmax=13)
+summary(grid)
+grid$rss
+(train_rmse_from_grid = sqrt(grid$rss/nrow(wine_projection)))
+summary(grid)$cp
+which.min(summary(grid)$cp)
+summary(grid)$bic
+which.min(summary(grid)$bic)
+```
+
+**Result of regsubsets, additive, no interactions**
+
+- by Cp choose model 2 using inverse price and log price.
+- by BIC choose model 4.
+- the RMSE (on whole data set for exploration) is very close for these 2, which might justify using the 2 predictor variant, but we'll use CV to confirm and provide the selection
+
+```{r}
+mod3 = glm(logit_points~log(price)+inv_price, data=wine_projection)
+plot(mod3)
+summary(mod3)
+```
+
+- residuals versus fitted looks good.  Some indication of positive residuals for positive fitted values, and vice versa for negative residuals, but only for extreme residuals (need to do the studentized residuals).  In general no correlation of residuals to y or x, looking good.
+- QQ shows heavy tails, meaning that the error is not Gaussian.  At 137k observations, we need to argue that the CLT means we can use t-tests, F-tests, etc.
+
+```{r}
+ggplot(wine_projection, aes(x=wine_projection$inv_price, y=wine_projection$logit_points)) + ggtitle("Logit Points versus inverse price") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="inverse price",y="logit points") + geom_point(shape=1, color="blue") + geom_smooth(method=lm, color="green") 
+ggplot(wine_projection, aes(x=log(wine_projection$price), y=wine_projection$logit_points)) + ggtitle("Logit Points versus log price") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log price",y="logit points") + geom_point(shape=1, color="blue") + geom_smooth(method=lm, color="green") 
+
+```
+
+
+
+```{r}
+mod4 = glm(logit_points~log(price)+inv_price + price13 + price, data=wine_projection)
+plot(mod4)
+summary(mod4)
+```
+
+
+
+```{r}
+## SCREE plot to determine optimal number of price clusters
+dat = data.frame(wine_projection$price)
+wss = (nrow(dat)-1)*sum(apply(dat,2,var))
+for (i in 2:15) {
+    wss[i] = sum(kmeans(dat,centers=i)$withinss)
+}
+plot(1:15, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+```
+
+```{r}
+km.out = kmeans(wine_projection$price, 3)
+plot(wine_projection$price, col=(km.out$cluster + 1))
+```
+
+
+```{r}
+ggplot(data=wine_projection[km.out$cluster==1,], aes(price)) + stat_count(fill="green", colour="blue") + geom_density(color="blue") 
+ggplot(data=wine_projection[km.out$cluster==2,], aes(price)) + stat_count(fill="green", colour="blue") + geom_density(color="blue") 
+ggplot(data=wine_projection[km.out$cluster==3,], aes(price)) + stat_count(fill="green", colour="blue") + geom_density(color="blue") 
+
+
+```
+```{r}
+pr_cluster = as.factor(km.out$cluster)
+levels(pr_cluster)
+levels(pr_cluster) = c("med","high","low")
+levels(pr_cluster)
+wine_projection = data.frame(wine_projection, p_cluster=pr_cluster)
+mod5 = glm(logit_points~log(price)*p_cluster, data=wine_projection)
+plot(mod5)
+summary(mod5)
+
+```
+
+```{r}
+mod6 = glm(logit_points~inv_price*p_cluster, data=wine_projection)
+plot(mod6)
+summary(mod6)
+```
+
+
+```{r}
+library(tm)
+#descr = gsub("[][!#$%()*,.:;<=>@^_|~.{}]", "", as.character(wine_projection$description))
+corpus = Corpus(VectorSource(as.character(wine_projection$description)))
+inspect(corpus[1:2])
+corpus = tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+corpus = tm_map(corpus, stemDocument)
+inspect(corpus[1:2])
+```
+
+```{r}
+#meta(corpus, type="corpus")
+corpus_dtm = DocumentTermMatrix(corpus)
+```
+
+
+```{r}
+
+corpus_lda = LDA(corpus_dtm, k = 2, control = list(seed = 1234))
+corpus_documents = tidy(corpus_lda, matrix = "gamma")
+```
+
+```{r}
+wine_with_lda = data.frame(wine_projection, topic1 = corpus_documents$gamma[1:nrow(wine_projection)], topic2 = corpus_documents$gamma[(nrow(wine_projection)+1):nrow(corpus_documents)])
+```
+
+```{r}
+mod7 = glm(logit_points~inv_price*p_cluster + topic1, data=wine_with_lda)
+plot(mod7)
+summary(mod7)
+```
+
+```{r}
+
+corpus_topics <- tidy(corpus_lda, matrix = "beta")
+corpus_topics
+corpus_top_terms <- corpus_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+corpus_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+corpus_sentiments <- tidy(corpus_dtm) %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word")) %>%
+  count(document, sentiment, wt = count) %>%
+  ungroup() %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  arrange(sentiment)
+```
+
+```{r}
+beta_spread <- corpus_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+beta_spread
+```
+```{r}
+ggplot(beta_spread[order(abs(beta_spread$log_ratio)),][1:30,], aes(x=term, y=log_ratio)) + geom_bar(stat="identity", fill="green", width=.2) + coord_flip() + ggtitle("Log ratio of beta in topic2/topic1")
+```
+
+```{r}
+wine_with_lda2 = data.frame(wine_with_lda, document = rownames(wine_with_lda))
+wine_with_sentiment = merge(wine_with_lda2, corpus_sentiments[,c(1,4)], by = "document")
+sample_bad_reviews = sample(wine_with_sentiment$description[wine_with_sentiment$sentiment == -5], size=3)
+```
+```{r}
+#review_sentiment = ap_sentiments[order(as.numeric(ap_sentiments$document)),]
+#wine_with_lda = data.frame(wine_with_lda, review_sentiment = review_sentiment)
+mod8 = glm(logit_points~inv_price*p_cluster + topic1 + sentiment, data=wine_with_sentiment)
+plot(mod8)
+summary(mod8)
+```
+
+```{r}
+mod9 = glm(logit_points~inv_price*p_cluster + sentiment, data=wine_with_sentiment)
+plot(mod9)
+summary(mod9)
+```
+
