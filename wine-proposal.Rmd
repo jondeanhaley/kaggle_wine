@@ -1,6 +1,6 @@
 ---
 title: "Data Analysis Project Proposal"
-author: "STAT 420, Summer 2017, Eloise Rosen (eloiser2), Jondean Haley, Nilesh Malpekar"
+author: "STAT 420, Summer 2017, Eloise Rosen (eloiser2), Jondean Haley (jahaley2), Nilesh Malpekar (nmalpe2)"
 date: '7/17/2017'
 output:
   html_document: 
@@ -9,21 +9,33 @@ output:
 ---
 
 ### Dataset Description And Background
-(Description of the dataset. You do not necessarily have to list all the variables, but at least mention those of greatest importance.After reading the proposal, a reader should have a good understanding of your dataset without needing to reference the data itself or other documentation.)
+The dataset we're using is a free dataset from Kaggle Datasets that covers 150k wine reviews along with some attributes of the wines. It can be found [here](https://www.kaggle.com/zynicide/wine-reviews). (A Kaggle login is required to access it directly from kaggle.com. It's also included here in a zip file.) The data was originally scraped from [WineEnthusiast](http://www.winemag.com/?s=&drink_type=wine).
 
-(Background information on the dataset, including specific citation of its source)
+The values we plan on using are as follows:  
+**Points**: the number of points the wine received in its review, on a scale of 1-100. However, only wines with >= 80 points were published, so we will transform this, perhaps using logit or probit. This will be our response variable.  
+**Description**: a description of the wine's taste, smell, look, feel, etc. We plan to use LDA topic modeling to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifer. This is an additive predictor.  
+**Price**: the cost for a bottle of the wine. We will transform this using log or inverse or a power of the inverse (TBD by CV), or any combination of these. We also plan to cluster price into categories with 3 clusters (low, medium, high) being optimal, as determined by Scree plot. This categorical appears to be powerful when integrated with the price transforms. This is intuitive: wines cluster within price bands, with high point wines within each price cluster.  
+**Variety**: the type of grapes used  
+**Country**: the country that the wine is from  
 
 
 ### Statement
-(A tentative title for the project)
+The ability to predict wine popularity has obvious practical implications. In addition to this, this is a particularly interesting problem for several reasons:
 
-(A brief statement of the business, science, research, or personal interest you have in the dataset that you hope to explore)
+* We need to transform both predictors and response, which makes for a more interesting problem. We can dig into research of optimal transforms using cross validation over a grid of models.
+* The regression via glm shows heavy tails on the errors in the QQ plot. The good news is that we have 137k data points, and so this offers us an opportunity to argue that by the CLT the heavy tails do not obviate our use of t and F tests. We can explore the pitfalls of heavy tails and perhaps try to use the "heavy" package to do a glm with heavy tails. Again, this is more interesting than a more straight-forward problem.
+* Chance to use LDA topic modeling and sentiment analysis
+* Clustering price into categories also adds an additional interesting element
+
+Tentative title for the project: wine review analysis
 
 ### Data
 
 ```{r}
-#Evidence that the data can be loaded into R. Load the data, and print the first few values of the response variable as evidence.
+# Evidence that the data can be loaded into R. Load the data, and print the first few values of the 
+# response variable as evidence.
 
-data <- read.table(unz("winemag-data_first150k.csv.zip", "winemag-data_first150k.csv"), nrows=10, header=T, quote="\"", sep=",")
-head(data$points, n=10)
+data <- read.table(unz("winemag-data_first150k.csv.zip", "winemag-data_first150k.csv"), 
+                   nrows=10, header=T, quote="\"", sep=",")
+head(data, n=5)
 ```
