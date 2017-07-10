@@ -1,0 +1,115 @@
+---
+title: "Kaggle Wine"
+date: "July 5, 2017"
+output: html_document
+---
+
+
+
+```{r,  echo = FALSE, eval = FALSE}
+### INSTALLATION of packages, if necessary for evaluation:
+install.packages("ggplot2")
+install.packages("readr")
+install.packages("fpc")
+install.packages("boot")
+install.packages("leaps")
+install.packages("topicmodels")
+install.packages("tidytext")
+install.packages("magrittr")
+library(devtools)
+install_github("juliasilge/tidytext")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("geoR")
+install.packages("lmtest")
+install.packages("tm")
+install.packages("DAAG")
+#devtools::install_github('gokceneraslan/DAAG')
+```
+
+```{r, echo=FALSE}
+### LOAD LIBRARIES:
+library(ggplot2)
+library(readr)
+library(fpc)
+library(boot)
+library(leaps)
+library(topicmodels)
+library(tidytext)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(geoR)
+library(lmtest)
+library(tm)
+library(DAAG)
+library(MASS)
+
+```
+
+```{r, echo=FALSE}
+### LOAD data:
+wine = read.csv("winemag-data_first150k.csv")
+set.seed(1234)
+```
+
+```{r}
+## CLEAN data and isolate training data:
+# remove incomplete cases for used columns
+wine_projection = wine[complete.cases(wine[, c("points","price", "description")]), c("points","price", "description")]
+## 75% of the sample size
+smp_size <- floor(0.75 * nrow(wine_projection))
+train_ind <- sample(seq_len(nrow(wine_projection)), size = smp_size)
+wine_train <- wine_projection[train_ind, ]
+wine_test <- wine_projection[-train_ind, ]
+# unit test the partitioning
+nrow(wine_projection) == nrow(wine_test) + nrow(wine_train)
+```
+
+**Compare BoxCox optimal versus log(points) transform of response**
+
+```{r}
+lin_mod = lm(points ~ log(price), data=wine_train)
+bc = boxcox(lin_mod, plotit = TRUE, lambda=seq(1.5, 1.6, by = 0.01))
+boxcoxTrans = Vectorize(function(x, lam1, lam2 = NULL) {
+
+    # if we set lambda2 to zero, it becomes the one parameter transformation
+    lam2 <- ifelse(is.null(lam2), 0, lam2)
+
+    if (lam1 == 0L) {
+      log(x + lam2)
+    } else {
+      (((x + lam2)^lam1) - 1) / lam1
+    }
+})
+inv_boxcoxTrans = Vectorize(function(value, lambda1){
+    (1 + lambda1*value)^(1/lambda1)
+})
+mod = glm(boxcoxTrans(points, 1.52, 0)~log(price), data=wine_train)
+plot(mod)
+bptest(mod)
+#shapiro.test cannot work on sample > 5000
+shapiro.test(sample(resid(mod),5000))
+bptest(mod)
+summary(mod)
+(rmse_mod = sqrt(mean((wine_train$points) - inv_boxcoxTrans(fitted(mod), 1.52)) ^ 2))
+ggplot(wine_train, aes(y=boxcoxTrans(wine_train$points, 1.52), x=log(wine_train$price))) + ggtitle("BoxCox Transform(Points) versus Log Price") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log price",y="boxcoxTransform(points)") + geom_point(shape=1, color="blue") + geom_smooth(method=lm, color="green") 
+#switch to lm for prediction intervals
+inv_boxcoxTrans(predict(lm(boxcoxTrans(points, 1.52, 0)~log(price), data=wine_train), newdata = data.frame(price = 55), level=0.95, interval="prediction"), 1.52)
+(cv.error.mod = cv.glm(wine_train, mod, K=10)$delta[1])
+```
+```{r}
+mod1 = glm(log(points)~log(price), data=wine_train)
+plot(mod1)
+bptest(mod1)
+#shapiro.test cannot work on sample > 5000
+shapiro.test(sample(resid(mod1),5000))
+bptest(mod1)
+summary(mod1)
+(rmse_mod1 = sqrt(mean((wine_train$points) - exp(fitted(mod1))) ^ 2))
+ggplot(wine_train, aes(x=log(wine_train$price), y=log(wine_train$points))) + ggtitle("Log Points versus Log Price") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log price",y="log points") + geom_point(shape=1, color="blue") + geom_smooth(method=lm, color="green") 
+#switch to lm for prediction intervals
+exp(predict(lm(log(points)~log(price), data=wine_train), newdata = data.frame(price = 55), level=0.95, interval="prediction"))
+(cv.error.mod1 = cv.glm(wine_train, mod1, K=10)$delta[1])
+```
+
