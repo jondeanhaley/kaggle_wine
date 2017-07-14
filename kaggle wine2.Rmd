@@ -1,8 +1,29 @@
 ---
 title: "Kaggle Wine"
-date: "July 5, 2017"
+date: "July 13, 2017"
 output: html_document
 ---
+
+
+
+**Overall Direction**
+
+- goal is predictive accuracy of points given price, country of origin, description
+- we are transforming the main predictor, price, to log(price)
+- TBD: choose the optimal transform of the response, either BoxCox transform or log(points) ~ log(price) as the base additive model.  
+- The categorical continentTopFive is created, in which wines are separated into continent of origin, with the exception of partitioning off the top 5 wine producers in Europe.  There are given here: http://www.businessrevieweurope.eu/top10/250/Top-10:-Wine-Producing-Countries-in-Europe
+- Plots and regression reveal these top 5 as having the highest price and highest point wines, as expected.  Separation from the rest of Europe leads a better model in that these 5 dominate the overall regression against log(price), and so separation provides better predictive power for wines from the other countries of Europe.  See the results for log(points) ~ log(price)*continentTopFive.
+- LDA is used to create numerical predictor(s) from the textual description.  TBD how many topics we want in the LDA.  Currently there are 2, and so 1 predictor, the probability of the description being from topic 1, is provided.  The model then becomes log(points) ~ log(price)*continentTopFive + topic1 + ... + topicN, where N+1 topics discriminated via LDA.
+- Sentiment analysis is performed using the bing sentiment index.  TBD which sentiment index is best at separating wine reviews.  Currently, this provides another numeric, integer predictor beween -5 and 5.  TBD whether to k-means cluster this, or simply separate into positive/negative factors and use sentiment in an integrated model as another categorical.  So the model becomes log(points) ~ log(price)*continentTopFive + topic1 + sentiment.  TBD: test the full integration model and pare it down.
+
+
+**TODO**
+
+1.  we are choosing log(price) as the transform for this predictor.  Justify.
+2.  decide between 2 possible transforms for the response, boxCoxTransform at optimal lambda, or log(points).  Justify with regsubsets, which is better re the assumptions of MLR, and smaller average RMSE over 10-fold cross validation.
+3.  continentTopFive is better than just continent as a categorical predictor.  Justify by comparing integrated models.
+Ex.  now we're at boxCoxTrans(points) ~ log(price)*continentTopFive as the model.
+4.  
 
 
 
@@ -27,7 +48,7 @@ install.packages("DAAG")
 #devtools::install_github('gokceneraslan/DAAG')
 ```
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 ### LOAD LIBRARIES:
 library(ggplot2)
 library(readr)
@@ -47,30 +68,81 @@ library(MASS)
 
 ```
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 ### LOAD data:
 wine = read.csv("winemag-data_first150k.csv")
 set.seed(1234)
 ```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+getContinent = Vectorize(function(country){
+    if(country == "Canada" | country == "US" | country == "Mexico" | country == "US-France") return ("NorthAmerica")
+    if(country == "Argentina" | country == "Brazil" | country == "Chile" | country == "Uruguay") return ("SouthAmerica")
+    if(country == "China" | country == "Georgia" | country == "India" | country == "Israel" | country == "Lebanon" | country == "Japan" | country == "South Korea" ) return ("Asia")
+    if(country == "Australia" | country == "New Zealand") return ("Australia")
+    if(country == "Egypt" | country == "Morocco" | country == "South Africa" | country == "Tunisia") return ("Africa")
+    if(country == "Albania" | country == "Austria" | country == "Bosnia and Herzegovina" | country == "Bulgaria" | country == "Croatia" | country == "Cyprus" | country == "Czech Republic" | country == "England" | country == "France" | country == "Germany" | country == "Greece" | country == "Hungary" | country == "Romania" | country == "Serbia" | country == "Switzerland" | country == "Slovakia" | country == "Macedonia" | country == "Italy" | country == "Spain" | country == "Turkey" | country == "Slovenia" | country == "Lithuania" | country == "Luxembourg" | country == "Portugal" | country == "Moldova" | country == "Montenegro" | country == "Ukraine" ) return ("Europe")
+     else return (NA)
+})
+getContinent_withTop5 = Vectorize(function(country){
+    if(country == "Canada" | country == "US" | country == "Mexico" | country == "US-France") return ("NorthAmerica")
+    if(country == "France" | country == "Italy" | country == "Spain" | country == "Germany" | country == "Portugal") return ("EuropeTop5")
+    if(country == "Argentina" | country == "Brazil" | country == "Chile" | country == "Uruguay") return ("SouthAmerica")
+    if(country == "China" | country == "Georgia" | country == "India" | country == "Israel" | country == "Lebanon" | country == "Japan" | country == "South Korea" ) return ("Asia")
+    if(country == "Australia" | country == "New Zealand") return ("Australia")
+    if(country == "Egypt" | country == "Morocco" | country == "South Africa" | country == "Tunisia") return ("Africa")
+    if(country == "Albania" | country == "Austria" | country == "Bosnia and Herzegovina" | country == "Bulgaria" | country == "Croatia" | country == "Cyprus" | country == "Czech Republic" | country == "England" | country == "Greece" | country == "Hungary" | country == "Romania" | country == "Serbia" | country == "Switzerland" | country == "Slovakia" | country == "Macedonia" | country == "Turkey" | country == "Slovenia" | country == "Lithuania" | country == "Luxembourg" | country == "Moldova" | country == "Montenegro" | country == "Ukraine" ) return ("OtherEurope")
+     else return (NA)
+})
+wine = data.frame(wine, continent = getContinent(wine$country), continentTopFive = getContinent_withTop5(wine$country))
+```
 
-```{r}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 ## CLEAN data and isolate training data:
 # remove incomplete cases for used columns
-wine_projection = wine[complete.cases(wine[, c("points","price", "description")]), c("points","price", "description")]
+wine_projection = wine[complete.cases(wine[, c("points","price", "description", "continent", "continentTopFive")]), c("points","price", "description", "continent", "continentTopFive")]
 ## 75% of the sample size
 smp_size <- floor(0.75 * nrow(wine_projection))
 train_ind <- sample(seq_len(nrow(wine_projection)), size = smp_size)
 wine_train <- wine_projection[train_ind, ]
 wine_test <- wine_projection[-train_ind, ]
 # unit test the partitioning
-nrow(wine_projection) == nrow(wine_test) + nrow(wine_train)
+#nrow(wine_projection) == nrow(wine_test) + nrow(wine_train)
+```
+
+**Choice between continent and continentTopFive as first categorical**
+
+- A better separation is achieved using continentTopFive.  Note the intercept change for N America and S America, and the slope of Asia.  Using the top 5, OtherEurope has a separate slope from the EuropeTop5.
+- This comparison is done using log(points) as the response transform, yet TBD if optimal versus the optimal BoxCox transform.  Boxcox(points) partitioned by continentTopFive is given below.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(wine_projection, aes(x=log(price), y=log(points))) + 
+  geom_point(aes(col = continent, shape=continent)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=continent),method="lm",se = FALSE) + 
+            scale_colour_manual(values = c("red","green", "blue", "orange", "dodger blue", "violet")) + ggtitle("Log(points) versus Log(price), by Continent") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="log(points)")
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(wine_projection, aes(x=log(price), y=log(points))) + 
+  geom_point(aes(col = continentTopFive)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=continentTopFive),method="lm",se = FALSE) + 
+            scale_colour_manual(values = c("red","green", "blue", "orange", "dodger blue", "violet", "dark green")) + ggtitle("Log(points) versus Log(price), by ContinentTopFive") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="log(points)")
 ```
 
 **Compare BoxCox optimal versus log(points) transform of response**
 
-```{r}
+- The optimal lambda = 1.4975.
+- of interest: http://www.sciencedirect.com/science/article/pii/S2212977414000064
+- TODO: confirm this: The better model here, by AIC is log(points) ~ log(price)*continentTopFive.  Note that the 2 models have the same number of parameters, unless optimal lambda estimation is taken as a parameter.  Still, the difference in AIC is so large that log(points) is preferred by a wide margin.
+- TODO: compare by CV RMSE, BIC, adjusted R^2, etc.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 lin_mod = lm(points ~ log(price), data=wine_train)
-bc = boxcox(lin_mod, plotit = TRUE, lambda=seq(1.5, 1.6, by = 0.01))
+bc = boxcox(lin_mod, plotit = TRUE, lambda=seq(1.48, 1.52, by = 0.001))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+optimal_lamda = 1.4975
 boxcoxTrans = Vectorize(function(x, lam1, lam2 = NULL) {
 
     # if we set lambda2 to zero, it becomes the one parameter transformation
@@ -85,31 +157,143 @@ boxcoxTrans = Vectorize(function(x, lam1, lam2 = NULL) {
 inv_boxcoxTrans = Vectorize(function(value, lambda1){
     (1 + lambda1*value)^(1/lambda1)
 })
-mod = glm(boxcoxTrans(points, 1.52, 0)~log(price), data=wine_train)
+mod = glm(boxcoxTrans(points, optimal_lamda, 0)~log(price)*continentTopFive, data=wine_train)
 plot(mod)
 bptest(mod)
 #shapiro.test cannot work on sample > 5000
 shapiro.test(sample(resid(mod),5000))
 bptest(mod)
 summary(mod)
-(rmse_mod = sqrt(mean((wine_train$points) - inv_boxcoxTrans(fitted(mod), 1.52)) ^ 2))
-ggplot(wine_train, aes(y=boxcoxTrans(wine_train$points, 1.52), x=log(wine_train$price))) + ggtitle("BoxCox Transform(Points) versus Log Price") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log price",y="boxcoxTransform(points)") + geom_point(shape=1, color="blue") + geom_smooth(method=lm, color="green") 
+
+ggplot(wine_projection, aes(x=log(price), y=boxcoxTrans(points, optimal_lamda, 0))) + 
+  geom_point(aes(col = continentTopFive)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=continentTopFive),method="lm",se = FALSE) + 
+            scale_colour_manual(values = c("red","green", "blue", "orange", "dodger blue", "violet", "dark green")) + ggtitle("BoxCox(points) versus Log(price), by ContinentTopFive") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="boxcox(points)")
+
 #switch to lm for prediction intervals
-inv_boxcoxTrans(predict(lm(boxcoxTrans(points, 1.52, 0)~log(price), data=wine_train), newdata = data.frame(price = 55), level=0.95, interval="prediction"), 1.52)
+inv_boxcoxTrans(predict(lm(boxcoxTrans(points, optimal_lamda, 0)~log(price), data=wine_train), newdata = data.frame(price = 55), level=0.95, interval="prediction"), optimal_lamda)
+
+#for comparison re RMSE
+(rmse_mod = sqrt(mean((wine_train$points) - inv_boxcoxTrans(fitted(mod), optimal_lamda)) ^ 2))
 (cv.error.mod = cv.glm(wine_train, mod, K=10)$delta[1])
+inv_boxcoxTrans(sqrt(cv.error.mod), optimal_lamda)
 ```
-```{r}
-mod1 = glm(log(points)~log(price), data=wine_train)
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+mod1 = glm(log(points)~log(price)*continentTopFive, data=wine_train)
 plot(mod1)
 bptest(mod1)
 #shapiro.test cannot work on sample > 5000
 shapiro.test(sample(resid(mod1),5000))
 bptest(mod1)
 summary(mod1)
-(rmse_mod1 = sqrt(mean((wine_train$points) - exp(fitted(mod1))) ^ 2))
-ggplot(wine_train, aes(x=log(wine_train$price), y=log(wine_train$points))) + ggtitle("Log Points versus Log Price") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log price",y="log points") + geom_point(shape=1, color="blue") + geom_smooth(method=lm, color="green") 
+
+ggplot(wine_projection, aes(x=log(price), y=log(points))) + 
+  geom_point(aes(col = continentTopFive)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=continentTopFive),method="lm",se = FALSE) + 
+            scale_colour_manual(values = c("red","green", "blue", "orange", "dodger blue", "violet", "dark green")) + ggtitle("Log(points) versus Log(price), by ContinentTopFive") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="log(points)")
+
 #switch to lm for prediction intervals
 exp(predict(lm(log(points)~log(price), data=wine_train), newdata = data.frame(price = 55), level=0.95, interval="prediction"))
+
+# for comparison by RMSE
+(rmse_mod1 = sqrt(mean((wine_train$points) - exp(fitted(mod1))) ^ 2))
 (cv.error.mod1 = cv.glm(wine_train, mod1, K=10)$delta[1])
+exp(sqrt(cv.error.mod1))
+```
+
+**LDA**
+
+- Currently, 2 topic separation is used.  TODO: determine the optimal number of topics.
+- TODO: extend into deeper NLP with n-grams, NN's, etc?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#descr = gsub("[][!#$%()*,.:;<=>@^_|~.{}]", "", as.character(wine_projection$description))
+corpus = Corpus(VectorSource(as.character(wine_projection$description)))
+inspect(corpus[1:2])
+corpus = tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+corpus = tm_map(corpus, stemDocument)
+corpus_dtm = DocumentTermMatrix(corpus)
+corpus_lda = LDA(corpus_dtm, k = 2, control = list(seed = 1234))
+corpus_documents = tidy(corpus_lda, matrix = "gamma")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+corpus_topics <- tidy(corpus_lda, matrix = "beta")
+corpus_topics
+corpus_top_terms <- corpus_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+corpus_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+corpus_sentiments <- tidy(corpus_dtm) %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word")) %>%
+  count(document, sentiment, wt = count) %>%
+  ungroup() %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  arrange(sentiment)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+beta_spread <- corpus_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+beta_spread
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(beta_spread[order(abs(beta_spread$log_ratio)),][1:30,], aes(x=term, y=log_ratio)) + geom_bar(stat="identity", fill="green", width=.2) + coord_flip() + ggtitle("Log ratio of beta in topic2/topic1")
+```
+
+**Sentiment Analysis**
+
+- Sentiment was computed using bing.
+- K-means clustering on sentiment was done, k = 3.  
+
+```{r}
+wine_train_lda = data.frame(wine_train, topic1 = corpus_documents$gamma[1:nrow(wine_train)], document = rownames(wine_train))
+wine_train_sentiment = merge(wine_train_lda, corpus_sentiments[,c(1,4)], by = "document")
+
+km.out = kmeans(wine_train_sentiment$sentiment, 3)
+plot(wine_train_sentiment$sentiment, col=(km.out$cluster + 1))
+wine_train_clustered = data.frame(wine_train_sentiment, cluster = km.out$cluster)
+```
+
+**Adding topic1 to the model**
+
+- Returning to expand the model with sentiment cluster integrated as a categorical
+- TODO: use sentiment addivitively as a numerical predictor instead.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#review_sentiment = ap_sentiments[order(as.numeric(ap_sentiments$document)),]
+#wine_with_lda = data.frame(wine_with_lda, review_sentiment = review_sentiment)
+mod2 = glm(log(points) ~ log(price)*continentTopFive*cluster + topic1 , data=wine_train_clustered)
+plot(mod2)
+bptest(mod2)
+#shapiro.test cannot work on sample > 5000
+shapiro.test(sample(resid(mod2),5000))
+bptest(mod2)
+summary(mod2)
+(rmse_mod2 = sqrt(mean((wine_train$points) - exp(fitted(mod2))) ^ 2))
+#switch to lm for prediction intervals
+#exp(predict(lm(log(points)~log(price)+ topic1 + sentiment, data=wine_train_sentiment), newdata = data.frame(price = 55), level=0.95, interval="prediction"))
+(cv.error.mod2 = cv.glm(wine_train_clustered, mod2, K=10)$delta[1])
+exp(sqrt(cv.error.mod2))
 ```
 
