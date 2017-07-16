@@ -1,5 +1,5 @@
 ---
-title: "Data Analysis Project Proposal"
+title: "Wine Review Analysis - Project Proposal"
 author: "STAT 420, Summer 2017, Eloise Rosen (eloiser2), Jondean Haley (jahaley2), Nilesh Malpekar (nmalpe2)"
 date: '7/17/2017'
 output:
@@ -9,28 +9,36 @@ output:
 ---
 
 ### Dataset Description And Background
-The dataset we're using is a free dataset from Kaggle Datasets that covers 150k wine reviews along with some attributes of the wines. It can be found [here](https://www.kaggle.com/zynicide/wine-reviews). (A Kaggle login is required to access it directly from kaggle.com. It's also included here in a zip file.) The data was originally scraped from [WineEnthusiast](http://www.winemag.com/?s=&drink_type=wine).
+The dataset we're using is a free dataset from Kaggle Datasets that covers 150k wine reviews along with some attributes of the wines. It can be found [here](https://www.kaggle.com/zynicide/wine-reviews). (A Kaggle login is required to access it directly from kaggle.com. It's also included here in a zip file.) The data was originally scraped from [WineEnthusiast](http://www.winemag.com/?s=&drink_type=wine). 
 
-The values we plan on using are as follows:  
-**Points**: the number of points the wine received in its review, on a scale of 1-100. However, only wines with >= 80 points were published, so we will transform this. We plan to check out logit, probit, BoxCox and log transforms. This will be our response variable.  
-**Description**: a description of the wine's taste, smell, look, feel, etc. We plan to use LDA topic modeling to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifer. This is an additive predictor.  
-**Price**: the cost for a bottle of the wine. We will transform this using log or inverse or a power of the inverse (TBD by CV), or any combination of these. We also plan to cluster price into categories with 3 clusters (low, medium, high) being optimal, as determined by Scree plot. This categorical appears to be powerful when integrated with the price transforms. This is intuitive: wines cluster within price bands, with high point wines within each price cluster.  
-**Variety**: the type of grapes used  
-**Country**: the country that the wine is from
+The wine dataset is in *CSV* format and we plan on using following columns:
 
-We also plan to create a categorical continentTopFive, in which wines are separated into continent of origin, with the exception of partitioning off the top 5 wine producers in Europe. There are given here: http://www.businessrevieweurope.eu/top10/250/Top-10:-Wine-Producing-Countries-in-Europe  
-Partitioning wine by continent separates regressions nicely, with changes of slope and intercept for various continents.  Further, when we isolated the top 5 producers of Europe (France, Germany, Italy, Portugal, Spain) we see that "OtherEurope" is nicely separated with a unique slope (larger).  These top 5 dominate the overall regression, and so isolating allows more predictive power for the "edge cases" of other European countries.
+* **Points**: the number of points the wine received in its review, on a scale of 1-100. However, only wines with >= 80 points were published in the dataset. 
+We plan to transform this feature and check out logit, probit, BoxCox and log transforms. This will be our response variable.
+
+* **Description**: a description of the wine's taste, smell, look, feel, etc. 
+We plan to use [LDA topic modeling](http://tidytextmining.com/topicmodeling.html) to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifer. This is an additive predictor.
+
+* **Price**: the cost for a bottle of the wine. 
+We will transform this using log or inverse or a power of the inverse (TBD by CV), or any combination of these. We also plan to cluster price into categories with 3 clusters (low, medium, high) being optimal, as determined by Scree plot. This calculated categorical feature appears to be powerful when integrated with the price transforms. This is intuitive: wines cluster within price bands, with high point wines within each price cluster.
+
+* **Variety**: the type of grapes used
+
+* **Country**: the country that the wine is from
+
+#### Further feature calculations
+We also plan to create a new categorical feature called *continentTopFive*, in which wines are separated into continent of origin, with the exception of partitioning off the top 5 wine producers in Europe as per [Top 10 Wine producing countries in Europe](http://www.businessrevieweurope.eu/top10/250/Top-10:-Wine-Producing-Countries-in-Europe) 
+
+Partitioning wine by continent separates regressions nicely, with changes of slope and intercept for various continents.  Further, when we isolate the top 5 producers of Europe (France, Germany, Italy, Portugal, Spain) we see that "OtherEurope" is nicely separated with a unique slope (larger).  These top 5 dominate the overall regression, and so isolating allows more predictive power for the "edge cases" of other European countries.
 
 
 ### Statement
-The ability to predict wine popularity has obvious practical implications. In addition to this, this is a particularly interesting problem for several reasons:
+We would like to explore this wine dataset to predict wine popularity using the sentiment analysis. In addition to this, this is a particularly interesting problem for several reasons:
 
 * We need to transform both predictors and response, which makes for a more interesting problem. We can dig into research of optimal transforms using cross validation over a grid of models.
 * The regression via glm shows heavy tails on the errors in the QQ plot. The good news is that we have 137k data points, and so this offers us an opportunity to argue that by the CLT the heavy tails do not obviate our use of t and F tests. We can explore the pitfalls of heavy tails and perhaps try to use the "heavy" package to do a glm with heavy tails. Again, this is more interesting than a more straight-forward problem.
 * Chance to use LDA topic modeling and sentiment analysis
-* The continentTopFive categorical as explained above also adds an additional interesting element
-
-Tentative title for the project: wine review analysis
+* The continentTopFive categorical, as explained above, also adds an additional interesting element
 
 ### Data
 
