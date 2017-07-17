@@ -1,0 +1,101 @@
+---
+title: "Kaggle Wine"
+author: "Jondean Haley"
+date: "July 5, 2017"
+output: html_document
+---
+
+```{r,  echo = FALSE, eval = FALSE}
+### INSTALLATION of packages, if necessary for evaluation:
+install.packages("ggplot2")
+install.packages("readr")
+install.packages("fpc")
+install.packages("boot")
+install.packages("leaps")
+install.packages("topicmodels")
+install.packages("tidytext")
+install.packages("magrittr")
+library(devtools)
+install_github("juliasilge/tidytext")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("geoR")
+install.packages("lmtest")
+```
+
+```{r, echo=FALSE}
+### LOAD LIBRARIES:
+library(ggplot2)
+library(readr)
+library(fpc)
+library(boot)
+library(leaps)
+library(topicmodels)
+library(tidytext)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(geoR)
+library(lmtest)
+
+```
+
+```{r}
+#FUNCTIONS and unit tests
+logit_transform = function(points){
+   log((points - 79.95) / (100.05 - points))
+}
+inverse_logit_transform = function(x){
+    (79.95 + 100.05*exp(x))/(1 + exp(x))
+}
+boxcoxTrans = Vectorize(function(x, lam1, lam2 = NULL) {
+    # if we set lambda2 to zero, it becomes the one parameter transformation
+    lam2 = ifelse(is.null(lam2), 0, lam2)
+    if (lam1 == 0L) {
+      log(x + lam2)
+    } else {
+      (((x + lam2)^lam1) - 1) / lam1
+    }
+})
+#unit tests
+all.equal(inverse_logit_transform(0), 90)
+all.equal(inverse_logit_transform(5.993961),100)
+all.equal(inverse_logit_transform(-5.993961),80)
+
+```
+```{r, echo=FALSE}
+### LOAD data:
+wine = read.csv("winemag-data_first150k.csv")
+set.seed(1234)
+```
+
+```{r}
+## CLEAN data:
+# remove incomplete cases for used columns
+wine_projection = wine[complete.cases(wine[, c("points","price", "description")]), c("points","price", "description")]
+```
+
+```{r}
+## AUGMENT the data frame
+wine_projection = data.frame(wine_projection, logit_points = logit_transform(wine_projection$points), inv_price = 1/wine_projection$price, log_price = log(wine_projection$price), sqrt_price = sqrt(wine_projection$price))
+```
+
+```{r}
+## CLUSTER by price, add cluster id to the data frame
+km.out = kmeans(wine_projection$price, 3)
+pr_cluster = as.factor(km.out$cluster)
+levels(pr_cluster) = c("high","med","low")
+wine_projection = data.frame(wine_projection, price_cluster=pr_cluster)
+plot(wine_projection$price, col=(wine_projection$price_cluster))
+```
+
+```{r}
+## plot within clusters
+
+ggplot(sample_n(wine_projection, size=5000), aes(x=log_price, y=logit_points)) + 
+  geom_point(aes(colour = price_cluster)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=price_cluster), method="lm",se = FALSE) + 
+             ggtitle("Logit Points versus log(price), interacting with price cluster") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="Logit Points")
+
+```
+
