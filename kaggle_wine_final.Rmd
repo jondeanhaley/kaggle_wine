@@ -1,0 +1,56 @@
+---
+title: "Wine Review Analysis"
+author: "STAT 420, Summer 2017, Eloise Rosen (eloiser2), Jondean Haley (jahaley2), Nilesh Malpekar (nmalpe2)"
+date: '8/4/2017'
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+---
+
+
+### Introduction
+In this project we use a dataset of wine reviews to predict review points from numerical, categorical and textual predictors.
+
+The data is from Kaggle Datasets, and covers 150k wine reviews along with some attributes of the wines. It can be found [here](https://www.kaggle.com/zynicide/wine-reviews). (A (free) Kaggle login is required to access it directly from kaggle.com). The data was originally scraped from [WineEnthusiast](http://www.winemag.com/?s=&drink_type=wine). 
+
+The dataset contains the following columns:
+
+* **Points**: the number of points the wine received in its review, on a scale of 1-100. However, only wines with >= 80 points were published in the dataset. 
+We plan to transform this feature and check out logit, probit, BoxCox and log transforms. This will be our response variable.
+
+* **Description**: a description of the wine's taste, smell, look, feel, etc. 
+We plan to use [LDA topic modeling](http://tidytextmining.com/topicmodeling.html) to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifer. This is an additive predictor.
+
+* **Price**: the cost for a bottle of the wine. 
+We will transform this using log or inverse or a power of the inverse (TBD by CV), or any combination of these.
+
+* **Variety**: the type of grapes used
+
+* **Country**: the country that the wine is from
+
+This is a particularly interesting problem for several reasons:
+
+* We need to transform both predictors and response, which makes for a more interesting problem. We can dig into research of optimal transforms using cross validation over a grid of models.
+* The regression via glm shows heavy tails on the errors in the QQ plot. Because we have 137k data points, this offers us an opportunity to argue that by the CLT the heavy tails do not obviate our use of t and F tests. We can explore the pitfalls of heavy tails and try to use the "heavy" package to do a glm with heavy tails. Again, this is more interesting than a more straight-forward problem.
+* Chance to use LDA topic modeling and sentiment analysis
+
+### Methods
+
+```{r}
+
+```
+
+### Results
+
+```{r}
+
+```
+
+### Discussion
+
+### Appendix
+
+```{r}
+
+```
