@@ -57,6 +57,7 @@ install.packages("tm")
 install.packages("DAAG")
 #devtools::install_github('gokceneraslan/DAAG')
 install.packages("caret")
+install.packages("e1071")
 ```
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
@@ -166,7 +167,9 @@ names(wine)
 
 **Training and Test Set Generation**
 
-```{r, echo=FALSE, message=FALSE, warning=FALSE}
+We create an 80% training, 20% test split for later use in cross validation.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results="hide"}
 ## REMOVE TEST SET = 20% of data.
 #Randomly shuffle the data
 wine = wine[sample(nrow(wine)),]
@@ -278,8 +281,8 @@ RMSE2 = mean(rmses)
 **Model 3**
 
 - The Box-Cox transform of the response was performed to try to counteract the indicated heteroskedasticity.
-- The model started with a base of: $bc_points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3$
-- The optimal model after backward BIC selection was:  $bc_points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+- The model started with a base of: $bc\_points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3$
+- The optimal model after backward BIC selection was:  $bc\_points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 bc_mod = caret::BoxCoxTrans(wine_train$points)
@@ -387,9 +390,13 @@ preds = predict(mod2, newdata=wine_test)
 success_ratio = sum(wine_test$points >= preds - 2*2.433 & wine_test$points <= preds + 2*2.433) / nrow(wine_test)
 ```
 
-- Using Model 2 with this prediction interval resulted in a success ratio of `r success_ratio` on the withheld test set. ie This percentage of the withheld test set points were within the prediction interval of Model #2.
+- Using Model 2 with this prediction interval resulted in a success ratio of `r success_ratio` on the withheld test set (i.e. this percentage of the withheld test set points were within the prediction interval of Model #2).
 
 ### Discussion
+
+
+#TODO: Instructions: "The discussion section should contain discussion of your results. This should frame your results in the context of the data. How is your final model useful?"
+
 
 ### Appendix
 
