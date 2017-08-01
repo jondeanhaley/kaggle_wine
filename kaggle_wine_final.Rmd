@@ -394,10 +394,19 @@ success_ratio = sum(wine_test$points >= preds - 2*2.433 & wine_test$points <= pr
 ### Appendix
 
 
+**About the LDA**
+
+- Since we did not want to wander too far into topic modelling of the wine descriptions, an LDA with only 2 topics was performed.  Future extension to this work should try to mine topics and sentiment further from the somelier description, via NLP techniques.
+- Our LDA treatment relies on 2 references regarding the 'topicmodels' library of R:
+    - http://tidytextmining.com/topicmodeling.html
+    - https://cran.r-project.org/web/packages/topicmodels/vignettes/topicmodels.pdf
+- LDA with 2 topics creates 2 probability distributions of words discovered in the processed wine descriptions (after removing punctuation, white space, casting to lower case and stemming, which means taking word roots).  Each of these probability distributions is a "topic".  Each description receives a probability of coming from topic1, with the probability of coming from topic2 being 1 minus this value.  This probability of being generated from topic 1 is our "topic1" predictor.  Our "topic1" predictor remained significant as an additive and integrated predictor in all BIC reduced models.
+- The "beta" of a word in a topic is its probability within the topic probability distribution.  Below, topic 1 and topic 2 probabilities for various words are displayed, as is the log ratio of the topic probabilities for some words.
+
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-corpus_topics <- tidy(corpus_lda, matrix = "beta")
-corpus_topics
-corpus_top_terms <- corpus_topics %>%
+corpus_topics = tidy(corpus_lda, matrix = "beta")
+#corpus_topics
+corpus_top_terms = corpus_topics %>%
   group_by(topic) %>%
   top_n(10, beta) %>%
   ungroup() %>%
@@ -405,20 +414,20 @@ corpus_top_terms <- corpus_topics %>%
 
 corpus_top_terms %>%
   mutate(term = reorder(term, beta)) %>%
-  ggplot(aes(term, beta, fill = factor(topic))) +
+  ggplot(aes(term, beta, fill = factor(topic))) + ggtitle("Word Probabilities for the 2 Topics") +
   geom_col(show.legend = FALSE) +
   facet_wrap(~ topic, scales = "free") +
   coord_flip()
 
-beta_spread <- corpus_topics %>%
+beta_spread = corpus_topics %>%
   mutate(topic = paste0("topic", topic)) %>%
   spread(topic, beta) %>%
   filter(topic1 > .001 | topic2 > .001) %>%
   mutate(log_ratio = log2(topic2 / topic1))
-beta_spread
+#beta_spread
 
 ## Plot the beta spread of the topics
-ggplot(beta_spread[order(abs(beta_spread$log_ratio)),][1:30,], aes(x=term, y=log_ratio)) + geom_bar(stat="identity", fill="green", width=.2) + coord_flip() + ggtitle("Log ratio of beta in topic2/topic1")
+ggplot(beta_spread[order(abs(beta_spread$log_ratio)),][1:30,], aes(x=term, y=log_ratio)) + geom_bar(stat="identity", fill="green", width=.2) + coord_flip() + ggtitle("Log ratio of word probabilities in topic2/topic1")
 ```
 
 
