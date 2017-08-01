@@ -37,20 +37,390 @@ This is a particularly interesting problem for several reasons:
 
 ### Methods
 
-```{r}
+```{r,  echo = FALSE, eval = FALSE}
+### INSTALLATION of packages, if necessary for evaluation:
+install.packages("ggplot2")
+install.packages("readr")
+install.packages("fpc")
+install.packages("boot")
+install.packages("leaps")
+install.packages("topicmodels")
+install.packages("tidytext")
+install.packages("magrittr")
+library(devtools)
+install_github("juliasilge/tidytext")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("geoR")
+install.packages("lmtest")
+install.packages("tm")
+install.packages("DAAG")
+#devtools::install_github('gokceneraslan/DAAG')
+install.packages("caret")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### LOAD LIBRARIES:
+
+library(ggplot2)
+library(readr)
+library(fpc)
+library(boot)
+library(leaps)
+library(topicmodels)
+library(tidytext)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+#library(geoR)
+library(lmtest)
+library(tm)
+library(DAAG)
+library(MASS)
+library(caret)
+set.seed(1234)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### FUNCTIONS
+
+getContinent_withTop5 = Vectorize(function(country){
+    if(country == "Canada" | country == "US" | country == "Mexico" | country == "US-France") return ("NorthAmerica")
+    if(country == "France" | country == "Italy" | country == "Spain" | country == "Germany" | country == "Portugal") return ("EuropeTop5")
+    if(country == "Argentina" | country == "Brazil" | country == "Chile" | country == "Uruguay") return ("SouthAmerica")
+    if(country == "China" | country == "Georgia" | country == "India" | country == "Israel" | country == "Lebanon" | country == "Japan" | country == "South Korea" ) return ("Asia")
+    if(country == "Australia" | country == "New Zealand") return ("Australia")
+    if(country == "Egypt" | country == "Morocco" | country == "South Africa" | country == "Tunisia") return ("Africa")
+    if(country == "Albania" | country == "Austria" | country == "Bosnia and Herzegovina" | country == "Bulgaria" | country == "Croatia" | country == "Cyprus" | country == "Czech Republic" | country == "England" | country == "Greece" | country == "Hungary" | country == "Romania" | country == "Serbia" | country == "Switzerland" | country == "Slovakia" | country == "Macedonia" | country == "Turkey" | country == "Slovenia" | country == "Lithuania" | country == "Luxembourg" | country == "Moldova" | country == "Montenegro" | country == "Ukraine" ) return ("OtherEurope")
+     else return (NA)
+})
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### LOAD data:
+wine = read.csv("winemag-data_first150k.csv")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### CLEAN data - Use only complete cases for the basic features
+wine = wine[complete.cases(wine[, c("points","price", "description", "country")]), c("points","price", "description", "country")]
+```
+
+
+**Feature Engineering**
+
+- The country was used to compute the continentTopFive, which was added as a categorical feature. This feature is the continent of the country of origin of the wine, with the separation of the top 5 wine producers in Europe into their own class.  These include France, Germany, Italy, Spain and Portugal.  The levels are indicated in the plot of points vs log(price), by continentTopFive.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### Add 'continentTopFive' feature
+wine = data.frame(wine, continentTopFive = getContinent_withTop5(wine$country))
+#levels(wine$continentTopFive)
+ggplot(wine, aes(x=log(price), y=points)) + 
+  geom_point(aes(col = continentTopFive)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=continentTopFive),method="lm",se = FALSE) + 
+            scale_colour_manual(values = c("red","green", "blue", "orange", "dodger blue", "violet", "dark green")) + ggtitle("Points versus Log(price), by ContinentTopFive") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="points")
 
 ```
+
+- LDA for 2 topics was performed on the description of the wine.  The probability of being in the first topic was added as a feature named "topic1".
+- The sentiment of the description of the wine was computed using bing. Sentiment was added as a numeric predictor, named "sentiment", ranging from -6 to 11.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+### Perform LDA and sentiment analysis on the description
+
+corpus = Corpus(VectorSource(as.character(wine$description)))
+## transform corpus: remove white space and punctuation, transform to lower case, remove stop words, stem.
+corpus = tm_map(corpus, stripWhitespace)
+corpus = tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+corpus = tm_map(corpus, stemDocument)
+## create DocumentTerm matrix for LDA
+corpus_dtm = DocumentTermMatrix(corpus)
+## perform LDA with 2 topics
+corpus_lda = LDA(corpus_dtm, k = 2, control = list(seed = 1234))
+corpus_documents = tidy(corpus_lda, matrix = "gamma")
+
+## Derive sentiment score
+corpus_sentiments <- tidy(corpus_dtm) %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word")) %>%
+  count(document, sentiment, wt = count) %>%
+  ungroup() %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  arrange(sentiment)
+
+wine = data.frame(wine, topic1 = corpus_documents$gamma[1:nrow(wine)], document = rownames(wine))
+wine = merge(wine, corpus_sentiments[,c(1,4)], by = "document")
+wine = wine[complete.cases(wine[, c("points","price", "continentTopFive", "topic1", "sentiment")]), c("points","price", "continentTopFive", "topic1", "sentiment")]
+```
+
+- The resulting predictors after feature enginering are shown below, with 'points' as the response.
+- Because price ranges from 4 to 2300 USD, and is positive, ranging over 3 orders of magnitude, log(price) is used as a predictor, instead of price.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+names(wine)
+```
+
+**Training and Test Set Generation**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+## REMOVE TEST SET = 20% of data.
+#Randomly shuffle the data
+wine = wine[sample(nrow(wine)),]
+
+# Sample 80% to training, 20% to test set.
+smp_size = floor(0.80 * nrow(wine))
+train_ind = sample(seq_len(nrow(wine)), size = smp_size)
+wine_train = wine[train_ind, ]
+wine_test = wine[-train_ind, ]
+# unit test the partitioning
+nrow(wine) == nrow(wine_test) + nrow(wine_train)
+```
+
+
+**Model Selection**
+
+
+**Model #1**
+
+- The model started with the base of: $log(points-79.999) \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3$
+- The optimal model after backward BIC selection was:  $log(points - 79.999) \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + continentTopFive:topic1$
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+mod = lm(log(points-79.999) ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3, data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+# plot(select)
+# bptest(select)
+# shapiro.test(sample(resid(select),5000))
+# remove outliers and highly influential points and refit
+keep = which(abs(resid(select)) < 7 & cooks.distance(select) < 4 / nrow(wine_train))
+mod1 = lm(log(points - 79.999) ~ log(price) + continentTopFive + topic1 + 
+    log(price):continentTopFive + continentTopFive:topic1, data=wine_train, subset=keep)
+plot(mod1)
+bptest(mod1)
+shapiro.test(sample(resid(mod1),5000))
+
+wine_train_cv = wine_train[keep,]
+wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
+folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
+
+rmses = rep(0.0, 10)
+
+for(i in 1:10){
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- wine_train_cv[testIndexes, ]
+    trainData <- wine_train_cv[-testIndexes, ]
+    mod = lm(log(points - 79.999) ~ log(price) + continentTopFive + topic1 + 
+    log(price):continentTopFive + continentTopFive:topic1 , data=trainData)
+    pred = as.vector(predict(mod, newdata=testData))
+    rmse = sqrt(sum((exp(pred) + 79.999 - testData$points)^2)/nrow(testData))
+    #print(rmse)
+    rmses[i] = rmse
+}
+
+RMSE1 = mean(rmses)
+```
+
+- Outliers, in which the residual had magnitude over 7 points, were removed. Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE1`.
+
+
+**Model 2**
+
+
+- The model started with the base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3$
+- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3, data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+# plot(select)
+# bptest(select)
+# shapiro.test(sample(resid(select),5000))
+#remove highly influential points
+keep = which(cooks.distance(select) < 4 / nrow(wine_train))
+mod2 = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1, data=wine_train, subset=keep)
+plot(mod2)
+bptest(mod2)
+shapiro.test(sample(resid(mod2),5000))
+
+wine_train_cv = wine_train[keep,]
+wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
+folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
+
+rmses = rep(0.0, 10)
+
+for(i in 1:10){
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- wine_train_cv[testIndexes, ]
+    trainData <- wine_train_cv[-testIndexes, ]
+    mod = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1, data=trainData)
+    pred = as.vector(predict(mod, newdata=testData))
+    rmse = sqrt(sum((pred - testData$points)^2)/nrow(testData))
+    #print(rmse)
+    rmses[i] = rmse
+}
+
+RMSE2 = mean(rmses)
+```
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE2`.
+
+
+**Model 3**
+
+- The Box-Cox transform of the response was performed to try to counteract the indicated heteroskedasticity.
+- The model started with a base of: $bc_points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3$
+- The optimal model after backward BIC selection was:  $bc_points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+bc_mod = caret::BoxCoxTrans(wine_train$points)
+wine_train = cbind(wine_train, bc_points = predict(bc_mod, wine_train$points))
+mod = lm(bc_points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3, data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+keep = cooks.distance(mod) <= 4 / nrow(wine_train)
+mod3 = lm(bc_points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1, data=wine_train, subset = keep)
+plot(mod3)
+bptest(mod3)
+shapiro.test(sample(resid(mod3),5000))
+
+### Perform 10 fold cross validation
+
+#Randomly shuffle the training set and create 10 folds
+wine_train_cv = wine_train[keep,]
+wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
+folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
+# to store the RMSE per fold
+rmses = rep(0.0, 10)
+
+for(i in 1:10){
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- wine_train_cv[testIndexes, ]
+    trainData <- wine_train_cv[-testIndexes, ]
+    mod = lm(bc_points ~ log(price)*continentTopFive + sentiment + topic1 , data=trainData)
+    pred = as.vector(predict(mod, newdata=testData))
+    rmse = sqrt(sum(((pred*bc_mod$lambda + 1)^(1/bc_mod$lambda) - testData$points)^2)/nrow(testData))
+    rmses[i] = rmse
+}
+
+RMSE3 = mean(rmses)
+```
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE3`.
+
+**Model 4**
+
+- Weighted least squares was performed, with weight being proportional to the inverse of the observed variance of points.  The observed variance of residuals peaks at points = 90 and tapers to the ends of the points range.  The weight function therefore assumes its minimum at points = 90 and increases at the ends of the range of points.
+- The weight function used: $weights = sqrt(1 / 1 + abs(points -90))$
+- The model started with a base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3$
+- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3 , data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+keep = cooks.distance(mod) <= 4 / nrow(wine_train)
+mod4 = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1, data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+plot(mod4)
+bptest(mod4)
+shapiro.test(sample(resid(mod4),5000))
+
+### Perform 10 fold cross validation
+
+#Randomly shuffle the training set and create 10 folds
+wine_train_cv = wine_train[keep,]
+wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
+folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
+# to store the RMSE per fold
+rmses = rep(0.0, 10)
+
+for(i in 1:10){
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- wine_train_cv[testIndexes, ]
+    trainData <- wine_train_cv[-testIndexes, ]
+    mod = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1, data=trainData, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+    pred = as.vector(predict(mod, newdata=testData))
+    rmse = sqrt(sum((pred - testData$points)^2)/nrow(testData))
+    rmses[i] = rmse
+}
+
+RMSE4 = mean(rmses)
+```
+
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE4`.
+
+
 
 ### Results
 
-```{r}
+- 4 models were analyzed as candidates for optimal prediction of points.
+- For each, a base model was constructed and backward BIC selection was used to trim the model.
+- As seen by the plots and the BP and Shapiro-Wilk tests, normality of the errors is suspect, and heteroskedasticity is indicated for all models.  In particular, the variance seems highest for points around 90, and tapers to the extremes. Note however, that since Shapiro-Wilk in R can take a maximum of 5000 residuals, sampling was required, and this test is then dependent on the choice of random seed used in the sampling.
+- Many transforms (the 4 here, and not shown) were attemped in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
+- 10 fold cross-validation was performed on all models, with mean CV RMSE given as below.  
 
+| model | CV RMSE |
+|:-----:|:-------:|
+|   1   | 2.561   |
+|   2   | 2.433   |
+|   3   | 2.455   |
+|   4   | 2.571   |
+
+- Model #2 wins by minimal CV RMSE.
+- The CV RMSE can be used to construct prediction intervals, in lieu of analytic formulae based on normal and homoskedastic errors, as $\hat{y} \pm 2*2.433$ for the prediction interval.
+
+```{r}
+preds = predict(mod2, newdata=wine_test)
+success_ratio = sum(wine_test$points >= preds - 2*2.433 & wine_test$points <= preds + 2*2.433) / nrow(wine_test)
 ```
+
+- Using Model 2 with this prediction interval resulted in a success ratio of `r success_ratio` on the withheld test set. ie This percentage of the withheld test set points were within the prediction interval of Model #2.
 
 ### Discussion
 
 ### Appendix
 
-```{r}
 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+corpus_topics <- tidy(corpus_lda, matrix = "beta")
+corpus_topics
+corpus_top_terms <- corpus_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+corpus_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+beta_spread <- corpus_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+beta_spread
+
+## Plot the beta spread of the topics
+ggplot(beta_spread[order(abs(beta_spread$log_ratio)),][1:30,], aes(x=term, y=log_ratio)) + geom_bar(stat="identity", fill="green", width=.2) + coord_flip() + ggtitle("Log ratio of beta in topic2/topic1")
 ```
+
+
+
+
