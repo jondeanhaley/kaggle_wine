@@ -20,7 +20,7 @@ The dataset contains the following columns:
 We plan to transform this feature and check out logit, probit, BoxCox and log transforms. This will be our response variable.
 
 * **Description**: a description of the wine's taste, smell, look, feel, etc. 
-We plan to use [LDA topic modeling](http://tidytextmining.com/topicmodeling.html) to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifer. This is an additive predictor.
+We plan to use [LDA topic modeling](http://tidytextmining.com/topicmodeling.html) to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifier. This is an additive predictor.
 
 * **Price**: the cost for a bottle of the wine. 
 We will transform this using log or inverse or a power of the inverse (TBD by CV), or any combination of these.
@@ -158,7 +158,7 @@ wine = merge(wine, corpus_sentiments[,c(1,4)], by = "document")
 wine = wine[complete.cases(wine[, c("points","price", "continentTopFive", "topic1", "sentiment")]), c("points","price", "continentTopFive", "topic1", "sentiment")]
 ```
 
-- The resulting predictors after feature enginering are shown below, with 'points' as the response.
+- The resulting predictors after feature engineering are shown below, with 'points' as the response.
 - Because price ranges from 4 to 2300 USD, and is positive, ranging over 3 orders of magnitude, log(price) is used as a predictor, instead of price.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
@@ -372,7 +372,7 @@ RMSE4 = mean(rmses)
 - 4 models were analyzed as candidates for optimal prediction of points.
 - For each, a base model was constructed and backward BIC selection was used to trim the model.
 - As seen by the plots and the BP and Shapiro-Wilk tests, normality of the errors is suspect, and heteroskedasticity is indicated for all models.  In particular, the variance seems highest for points around 90, and tapers to the extremes. Note however, that since Shapiro-Wilk in R can take a maximum of 5000 residuals, sampling was required, and this test is then dependent on the choice of random seed used in the sampling.
-- Many transforms (the 4 here, and not shown) were attemped in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
+- Many transforms (the 4 here, and not shown) were attempted in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
 - 10 fold cross-validation was performed on all models, with mean CV RMSE given as below.  
 
 | model | CV RMSE |
@@ -394,16 +394,27 @@ success_ratio = sum(wine_test$points >= preds - 2*2.433 & wine_test$points <= pr
 
 ### Discussion
 
+We used four different strategies to attempt to meet the assumptions of multiple linear regression and minimize cross-validated RMSE. Attempts include transforming response with BoxCox and log, integrated polynomial models over the engineered features, and weighted least squares regression.  In the end, the non-transformed response model had the lowest cross-validated RMSE with a value of `r RMSE2`.
 
-#TODO: Instructions: "The discussion section should contain discussion of your results. This should frame your results in the context of the data. How is your final model useful?"
+Our coefficient results are as follows:
 
+```{r}
+coef(summary(mod2))
+```
+
+Normality of the errors and homoskedasticity are suspect, as demonstrated by the Breusch-Pagan and Shapiro-Wilk tests. We see that the variance seems highest for points around 90, and tapers to the extremes. However, because Shapiro-Wilk in R can take only a maximum of 5000 residuals, sampling is required, and this test is then dependent on the choice of random seed used in the sampling.
+
+We get around the normal and homoskedastic assumptions by using cross-validated RMSE to create our prediction intervals.  Doing so gives a 94% success rate on the withheld test set with a +/- 4.8 point prediction interval.  
+
+**Potential for future improvements:**
+This project could potentially be further expanded in the future by using deeper NLP, expanding with additional predictors, and expanded model selection attempts. It may also be the case that the data is noisy, with a high base $\epsilon$ variance of points no matter which predictors are used.  (subjective human judgement after all).
 
 ### Appendix
 
 
 **About the LDA**
 
-- Since we did not want to wander too far into topic modelling of the wine descriptions, an LDA with only 2 topics was performed.  Future extension to this work should try to mine topics and sentiment further from the somelier description, via NLP techniques.
+- Since we did not want to wander too far into topic modelling of the wine descriptions, an LDA with only 2 topics was performed.  Future extension to this work should try to mine topics and sentiment further from the sommelier description, via NLP techniques.
 - Our LDA treatment relies on 2 references regarding the 'topicmodels' library of R:
     - http://tidytextmining.com/topicmodeling.html
     - https://cran.r-project.org/web/packages/topicmodels/vignettes/topicmodels.pdf
