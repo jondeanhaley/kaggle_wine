@@ -106,6 +106,30 @@ getContinent_withTop5 = Vectorize(function(country){
   else 
     return (NA)
 })
+
+cv_mean_rmse = function(model_formula, traing_data, num = 10, pred.formula = NULL) {
+  traing_data = traing_data[sample(nrow(traing_data)),]
+  folds <- cut(seq(1,nrow(traing_data)), breaks=num, labels=FALSE)
+
+  rmses = rep(0.0, num)
+
+  for(i in 1:num){
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    
+    testData <- traing_data[testIndexes, ]
+    trainData <- traing_data[-testIndexes, ]
+    
+    mod = lm(model_formula, data=trainData)
+    pred = as.vector(predict(mod, newdata=testData))
+    if (! is.null(pred.formula)) {
+      pred = sapply(pred, FUN = pred.formula, simplify = TRUE)
+    }
+    rmse = sqrt(mean((pred - testData$points)^2))
+    rmses[i] = rmse
+  }
+
+  mean(rmses)
+}
 ```
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
@@ -218,33 +242,22 @@ select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 # plot(select)
 # bptest(select)
 # shapiro.test(sample(resid(select),5000))
-# remove outliers and highly influential points and refit
-keep = which(abs(resid(select)) < 7 & cooks.distance(select) < 4 / nrow(wine_train))
-mod1 = lm(log(points - 79.999) ~ log(price) + continentTopFive + topic1 + 
-    log(price):continentTopFive + continentTopFive:topic1, data=wine_train, subset=keep)
+
+# remove outliers and highly influential points and refit the *select*ed model
+keep = which(abs(resid(select)) <= 7 & cooks.distance(select) <= 4 / nrow(wine_train))
+
+select_formula1 = log(points - 79.999) ~ log(price) + continentTopFive + topic1 + 
+    log(price):continentTopFive + continentTopFive:topic1
+mod1 = lm(select_formula1, data=wine_train, subset=keep)
+
+# Plot details and perform tests for homoscedasticity and normality of errors.
 plot(mod1)
 bptest(mod1)
 shapiro.test(sample(resid(mod1),5000))
 
 wine_train_cv = wine_train[keep,]
-wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
-folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
 
-rmses = rep(0.0, 10)
-
-for(i in 1:10){
-    testIndexes <- which(folds==i,arr.ind=TRUE)
-    testData <- wine_train_cv[testIndexes, ]
-    trainData <- wine_train_cv[-testIndexes, ]
-    mod = lm(log(points - 79.999) ~ log(price) + continentTopFive + topic1 + 
-    log(price):continentTopFive + continentTopFive:topic1 , data=trainData)
-    pred = as.vector(predict(mod, newdata=testData))
-    rmse = sqrt(sum((exp(pred) + 79.999 - testData$points)^2)/nrow(testData))
-    #print(rmse)
-    rmses[i] = rmse
-}
-
-RMSE1 = mean(rmses)
+RMSE1 = cv_mean_rmse(select_formula1, wine_train_cv, 10, function(x) {exp(x) + 79.999} )
 ```
 
 - Outliers, in which the residual had magnitude over 7 points, were removed. Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
@@ -264,33 +277,19 @@ select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 # plot(select)
 # bptest(select)
 # shapiro.test(sample(resid(select),5000))
+
 #remove highly influential points
-keep = which(cooks.distance(select) < 4 / nrow(wine_train))
-mod2 = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
-    log(price):topic1 + continentTopFive:topic1, data=wine_train, subset=keep)
+keep = which(cooks.distance(select) <= 4 / nrow(wine_train))
+select_formula2 = points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1
+mod2 = lm(select_formula2, data=wine_train, subset=keep)
 plot(mod2)
 bptest(mod2)
 shapiro.test(sample(resid(mod2),5000))
 
 wine_train_cv = wine_train[keep,]
-wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
-folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
 
-rmses = rep(0.0, 10)
-
-for(i in 1:10){
-    testIndexes <- which(folds==i,arr.ind=TRUE)
-    testData <- wine_train_cv[testIndexes, ]
-    trainData <- wine_train_cv[-testIndexes, ]
-    mod = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
-    log(price):topic1 + continentTopFive:topic1, data=trainData)
-    pred = as.vector(predict(mod, newdata=testData))
-    rmse = sqrt(sum((pred - testData$points)^2)/nrow(testData))
-    #print(rmse)
-    rmses[i] = rmse
-}
-
-RMSE2 = mean(rmses)
+RMSE2 = cv_mean_rmse(select_formula2, wine_train_cv, 10)
 ```
 
 - Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
@@ -305,12 +304,16 @@ RMSE2 = mean(rmses)
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 bc_mod = caret::BoxCoxTrans(wine_train$points)
+
 wine_train = cbind(wine_train, bc_points = predict(bc_mod, wine_train$points))
 mod = lm(bc_points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3, data=wine_train)
 select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+
 keep = cooks.distance(mod) <= 4 / nrow(wine_train)
-mod3 = lm(bc_points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
-    log(price):topic1 + continentTopFive:topic1, data=wine_train, subset = keep)
+select_formula3 = bc_points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1
+
+mod3 = lm(select_formula3, data=wine_train, subset = keep)
 plot(mod3)
 bptest(mod3)
 shapiro.test(sample(resid(mod3),5000))
@@ -319,22 +322,8 @@ shapiro.test(sample(resid(mod3),5000))
 
 #Randomly shuffle the training set and create 10 folds
 wine_train_cv = wine_train[keep,]
-wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
-folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
-# to store the RMSE per fold
-rmses = rep(0.0, 10)
 
-for(i in 1:10){
-    testIndexes <- which(folds==i,arr.ind=TRUE)
-    testData <- wine_train_cv[testIndexes, ]
-    trainData <- wine_train_cv[-testIndexes, ]
-    mod = lm(bc_points ~ log(price)*continentTopFive + sentiment + topic1 , data=trainData)
-    pred = as.vector(predict(mod, newdata=testData))
-    rmse = sqrt(sum(((pred*bc_mod$lambda + 1)^(1/bc_mod$lambda) - testData$points)^2)/nrow(testData))
-    rmses[i] = rmse
-}
-
-RMSE3 = mean(rmses)
+RMSE3 = cv_mean_rmse(select_formula3, wine_train_cv, 10, function(x) {(x*bc_mod$lambda + 1)^(1/bc_mod$lambda)})
 ```
 
 - Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
@@ -351,8 +340,11 @@ RMSE3 = mean(rmses)
 mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price))^2 + I(log(price))^3 , data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
 select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 keep = cooks.distance(mod) <= 4 / nrow(wine_train)
-mod4 = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
-    log(price):topic1 + continentTopFive:topic1, data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+
+select_formula4 = points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1
+mod4 = lm(select_formula4, data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+
 plot(mod4)
 bptest(mod4)
 shapiro.test(sample(resid(mod4),5000))
@@ -361,23 +353,8 @@ shapiro.test(sample(resid(mod4),5000))
 
 #Randomly shuffle the training set and create 10 folds
 wine_train_cv = wine_train[keep,]
-wine_train_cv = wine_train_cv[sample(nrow(wine_train_cv)),]
-folds <- cut(seq(1,nrow(wine_train_cv)),breaks=10,labels=FALSE)
-# to store the RMSE per fold
-rmses = rep(0.0, 10)
 
-for(i in 1:10){
-    testIndexes <- which(folds==i,arr.ind=TRUE)
-    testData <- wine_train_cv[testIndexes, ]
-    trainData <- wine_train_cv[-testIndexes, ]
-    mod = lm(points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
-    log(price):topic1 + continentTopFive:topic1, data=trainData, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
-    pred = as.vector(predict(mod, newdata=testData))
-    rmse = sqrt(sum((pred - testData$points)^2)/nrow(testData))
-    rmses[i] = rmse
-}
-
-RMSE4 = mean(rmses)
+RMSE4 = cv_mean_rmse(select_formula4, wine_train_cv, 10)
 ```
 
 
