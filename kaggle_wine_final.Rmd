@@ -86,14 +86,25 @@ set.seed(1234)
 ### FUNCTIONS
 
 getContinent_withTop5 = Vectorize(function(country){
-    if(country == "Canada" | country == "US" | country == "Mexico" | country == "US-France") return ("NorthAmerica")
-    if(country == "France" | country == "Italy" | country == "Spain" | country == "Germany" | country == "Portugal") return ("EuropeTop5")
-    if(country == "Argentina" | country == "Brazil" | country == "Chile" | country == "Uruguay") return ("SouthAmerica")
-    if(country == "China" | country == "Georgia" | country == "India" | country == "Israel" | country == "Lebanon" | country == "Japan" | country == "South Korea" ) return ("Asia")
-    if(country == "Australia" | country == "New Zealand") return ("Australia")
-    if(country == "Egypt" | country == "Morocco" | country == "South Africa" | country == "Tunisia") return ("Africa")
-    if(country == "Albania" | country == "Austria" | country == "Bosnia and Herzegovina" | country == "Bulgaria" | country == "Croatia" | country == "Cyprus" | country == "Czech Republic" | country == "England" | country == "Greece" | country == "Hungary" | country == "Romania" | country == "Serbia" | country == "Switzerland" | country == "Slovakia" | country == "Macedonia" | country == "Turkey" | country == "Slovenia" | country == "Lithuania" | country == "Luxembourg" | country == "Moldova" | country == "Montenegro" | country == "Ukraine" ) return ("OtherEurope")
-     else return (NA)
+  if( country %in% c("Canada", "US", "Mexico", "US-France")) 
+    return ("NorthAmerica")
+  if( country %in% c("France", "Italy", "Spain", "Germany", "Portugal")) 
+    return ("EuropeTop5") 
+  if( country %in% c("Argentina", "Brazil", "Chile", "Uruguay")) 
+    return ("SouthAmerica")
+  if( country %in% c("China", "Georgia", "India", "Israel", "Lebanon", "Japan", "South Korea") ) 
+    return ("Asia")
+  if( country %in% c("Australia", "New Zealand")) 
+    return ("Australia")
+  if( country %in% c("Egypt", "Morocco", "South Africa", "Tunisia")) 
+    return ("Africa")
+  if( country %in% c("Albania", "Austria", "Bosnia and Herzegovina", "Bulgaria", "Croatia", 
+                     "Cyprus", "Czech Republic", "England", "Greece", "Hungary", "Romania", 
+                     "Serbia", "Switzerland", "Slovakia", "Macedonia", "Turkey", "Slovenia", 
+                     "Lithuania", "Luxembourg", "Moldova", "Montenegro", "Ukraine" )) 
+    return ("OtherEurope")
+  else 
+    return (NA)
 })
 ```
 
@@ -131,31 +142,39 @@ ggplot(wine, aes(x=log(price), y=points)) +
 
 ### Perform LDA and sentiment analysis on the description
 
-corpus = Corpus(VectorSource(as.character(wine$description)))
+corpus = tm::Corpus(tm::VectorSource(as.character(wine$description)))
 ## transform corpus: remove white space and punctuation, transform to lower case, remove stop words, stem.
-corpus = tm_map(corpus, stripWhitespace)
-corpus = tm_map(corpus, removePunctuation)
-corpus = tm_map(corpus, content_transformer(tolower))
-corpus = tm_map(corpus, removeWords, stopwords("english"))
-corpus = tm_map(corpus, stemDocument)
+corpus = tm::tm_map(corpus, stripWhitespace)
+corpus = tm::tm_map(corpus, removePunctuation)
+corpus = tm::tm_map(corpus, content_transformer(tolower))
+corpus = tm::tm_map(corpus, removeWords, stopwords("english"))
+# corpus = tm_map(corpus, removeWords, c("wine"))
+corpus = tm::tm_map(corpus, stemDocument)
 ## create DocumentTerm matrix for LDA
 corpus_dtm = DocumentTermMatrix(corpus)
-## perform LDA with 2 topics
-corpus_lda = LDA(corpus_dtm, k = 2, control = list(seed = 1234))
+
+NUM_TOPICS = 2
+
+corpus_lda = topicmodels::LDA(corpus_dtm, k = NUM_TOPICS, control = list(seed = 1234))
 corpus_documents = tidy(corpus_lda, matrix = "gamma")
 
+SENTIMENT_ENGINE = "bing"
 ## Derive sentiment score
 corpus_sentiments <- tidy(corpus_dtm) %>%
-  inner_join(get_sentiments("bing"), by = c(term = "word")) %>%
+  inner_join(get_sentiments(SENTIMENT_ENGINE), by = c(term = "word")) %>%
   count(document, sentiment, wt = count) %>%
   ungroup() %>%
   spread(sentiment, n, fill = 0) %>%
   mutate(sentiment = positive - negative) %>%
   arrange(sentiment)
+```
 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+## introduce new predictors
 wine = data.frame(wine, topic1 = corpus_documents$gamma[1:nrow(wine)], document = rownames(wine))
 wine = merge(wine, corpus_sentiments[,c(1,4)], by = "document")
 wine = wine[complete.cases(wine[, c("points","price", "continentTopFive", "topic1", "sentiment")]), c("points","price", "continentTopFive", "topic1", "sentiment")]
+
 ```
 
 - The resulting predictors after feature engineering are shown below, with 'points' as the response.
@@ -374,20 +393,28 @@ RMSE4 = mean(rmses)
 - As seen by the plots and the BP and Shapiro-Wilk tests, normality of the errors is suspect, and heteroskedasticity is indicated for all models.  In particular, the variance seems highest for points around 90, and tapers to the extremes. Note however, that since Shapiro-Wilk in R can take a maximum of 5000 residuals, sampling was required, and this test is then dependent on the choice of random seed used in the sampling.
 - Many transforms (the 4 here, and not shown) were attempted in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
 - 10 fold cross-validation was performed on all models, with mean CV RMSE given as below.  
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+rmse_data = data.frame(rmse = c(RMSE1, RMSE2, RMSE3, RMSE4))
+colnames(rmse_data) = c("CV RMSE")
+rownames(rmse_data) = c("model1", "model2", "model3", "model4")
 
-| model | CV RMSE |
-|:-----:|:-------:|
-|   1   | 2.561   |
-|   2   | 2.433   |
-|   3   | 2.455   |
-|   4   | 2.571   |
-
-- Model #2 wins by minimal CV RMSE.
-- The CV RMSE can be used to construct prediction intervals, in lieu of analytic formulae based on normal and homoskedastic errors, as $\hat{y} \pm 2*2.433$ for the prediction interval.
+best_model = which.min(rmse_data$`CV RMSE`)
+best_cv_rmse = rmse_data[best_model, 1]
+eqn1 = paste("$\\hat{y} \\pm 2*", best_cv_rmse, "$", sep = "")
+```
 
 ```{r}
+rmse_data
+```
+
+
+
+- Model `r best_model` wins by minimal CV RMSE(`r best_cv_rmse`).
+- The CV RMSE can be used to construct prediction intervals, in lieu of analytic formulae based on normal and homoskedastic errors, as `r eqn1` for the prediction interval.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 preds = predict(mod2, newdata=wine_test)
-success_ratio = sum(wine_test$points >= preds - 2*2.433 & wine_test$points <= preds + 2*2.433) / nrow(wine_test)
+success_ratio = sum(wine_test$points >= preds - 2*best_cv_rmse & wine_test$points <= preds + 2*best_cv_rmse) / nrow(wine_test)
 ```
 
 - Using Model 2 with this prediction interval resulted in a success ratio of `r success_ratio` on the withheld test set (i.e. this percentage of the withheld test set points were within the prediction interval of Model #2).
