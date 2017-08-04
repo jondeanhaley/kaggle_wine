@@ -1,0 +1,503 @@
+---
+title: "Wine Review Analysis"
+author: "STAT 420, Summer 2017, Eloise Rosen (eloiser2), Jondean Haley (jahaley2), Nilesh Malpekar (nmalpe2)"
+date: '8/4/2017'
+output:
+  html_document: 
+    toc: yes
+  pdf_document: default
+---
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+options(scipen = 1, digits = 4, width = 80)
+```
+
+### Introduction
+In this project we use a dataset of wine reviews to predict review points from numerical, categorical and textual predictors.
+
+The data is from Kaggle Datasets, and covers 150k wine reviews along with some attributes of the wines. It can be found [here](https://www.kaggle.com/zynicide/wine-reviews). (A (free) Kaggle login is required to access it directly from kaggle.com). The data was originally scraped from [WineEnthusiast](http://www.winemag.com/?s=&drink_type=wine). 
+
+The dataset contains the following columns:
+
+* **Points**: the number of points the wine received in its review, on a scale of 1-100. However, only wines with >= 80 points were published in the dataset. 
+We plan to transform this feature and check out logit, probit, BoxCox and log transforms. This will be our response variable.
+
+* **Description**: a description of the wine's taste, smell, look, feel, etc. 
+We plan to use [LDA topic modeling](http://tidytextmining.com/topicmodeling.html) to convert the text description into a small vector of numerical predictors. We plan to generate a "sentiment" numeric predictor using a sentiment classifier. This is an additive predictor.
+
+* **Price**: the cost for a bottle of the wine. 
+We will transform this using log or inverse or a power of the inverse (TBD by CV), or any combination of these.
+
+* **Variety**: the type of grapes used
+
+* **Country**: the country that the wine is from
+
+This is a particularly interesting problem for several reasons:
+
+* The regression via glm shows heavy tails on the errors in the QQ plot, making this a more challenging problem
+* We may need to transform both predictors and response, which again makes for a more interesting problem. We can dig into research of optimal transforms using cross validation over a grid of models.
+* Chance to use LDA topic modeling and sentiment analysis
+* Chance to do some feature engineering in an attempt to make the location information usable and useful
+
+### Methods
+
+```{r,  echo = FALSE, eval = FALSE}
+### INSTALLATION of packages, if necessary for evaluation:
+install.packages("ggplot2")
+install.packages("readr")
+install.packages("fpc")
+install.packages("boot")
+install.packages("leaps")
+install.packages("topicmodels")
+install.packages("tidytext")
+install.packages("magrittr")
+library(devtools)
+install_github("juliasilge/tidytext")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("geoR")
+install.packages("lmtest")
+install.packages("tm")
+install.packages("DAAG")
+#devtools::install_github('gokceneraslan/DAAG')
+install.packages("caret")
+install.packages("e1071")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### LOAD LIBRARIES:
+
+library(ggplot2)
+library(readr)
+library(fpc)
+library(boot)
+library(leaps)
+library(topicmodels)
+library(tidytext)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+#library(geoR)
+library(lmtest)
+library(tm)
+library(DAAG)
+library(MASS)
+library(caret)
+set.seed(1234)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### FUNCTIONS
+
+getContinent_withTop5 = Vectorize(function(country){
+  if( country %in% c("Canada", "US", "Mexico", "US-France")) 
+    return ("NorthAmerica")
+  if( country %in% c("France", "Italy", "Spain", "Germany", "Portugal")) 
+    return ("EuropeTop5") 
+  if( country %in% c("Argentina", "Brazil", "Chile", "Uruguay")) 
+    return ("SouthAmerica")
+  if( country %in% c("China", "Georgia", "India", "Israel", "Lebanon", "Japan", "South Korea") ) 
+    return ("Asia")
+  if( country %in% c("Australia", "New Zealand")) 
+    return ("Australia")
+  if( country %in% c("Egypt", "Morocco", "South Africa", "Tunisia")) 
+    return ("Africa")
+  if( country %in% c("Albania", "Austria", "Bosnia and Herzegovina", "Bulgaria", "Croatia", 
+                     "Cyprus", "Czech Republic", "England", "Greece", "Hungary", "Romania", 
+                     "Serbia", "Switzerland", "Slovakia", "Macedonia", "Turkey", "Slovenia", 
+                     "Lithuania", "Luxembourg", "Moldova", "Montenegro", "Ukraine" )) 
+    return ("OtherEurope")
+  else 
+    return (NA)
+})
+
+cv_mean_rmse = function(model_formula, traing_data, num = 10, pred.formula = NULL) {
+  traing_data = traing_data[sample(nrow(traing_data)),]
+  folds <- cut(seq(1,nrow(traing_data)), breaks=num, labels=FALSE)
+
+  rmses = rep(0.0, num)
+
+  for(i in 1:num){
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    
+    testData <- traing_data[testIndexes, ]
+    trainData <- traing_data[-testIndexes, ]
+    
+    mod = lm(model_formula, data=trainData)
+    pred = as.vector(predict(mod, newdata=testData))
+    if (! is.null(pred.formula)) {
+      pred = sapply(pred, FUN = pred.formula, simplify = TRUE)
+    }
+    rmse = sqrt(mean((pred - testData$points)^2))
+    rmses[i] = rmse
+  }
+
+  mean(rmses)
+}
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### LOAD data:
+wine = read.csv("winemag-data_first150k.csv")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+### CLEAN data - Use only complete cases for the basic features
+wine = wine[complete.cases(wine[, c("points","price", "description", "country")]), c("points","price", "description", "country")]
+```
+
+
+**Feature Engineering**
+
+- The country was used to compute continentTopFive, which was added as a categorical feature. This feature is the continent of the country of origin of the wine, with the separation of the top 5 wine producers in Europe into their own class.  These include France, Germany, Italy, Spain and Portugal.  The levels are indicated in the plot of points vs. log(price), by continentTopFive.
+
+```{r, message=FALSE, warning=FALSE}
+### Add 'continentTopFive' feature
+wine = data.frame(wine, continentTopFive = getContinent_withTop5(wine$country))
+#levels(wine$continentTopFive)
+ggplot(wine, aes(x=log(price), y=points)) + 
+  geom_point(aes(col = continentTopFive)) +stat_summary(fun.data=mean_cl_normal) + 
+    stat_smooth(aes(colour=continentTopFive),method="lm",se = FALSE) + 
+            scale_colour_manual(values = c("red","green", "blue", "orange", "dodger blue", "violet", "dark green")) + ggtitle("Points versus Log(price), by ContinentTopFive") + theme(plot.title = element_text(hjust = 0.5)) + labs(x="log(price)",y="points")
+
+```
+
+- LDA for 2 topics was performed on the description of the wine.  The probability of being in the first topic was added as a feature named "topic1".
+- The sentiment of the description of the wine was computed using bing. Sentiment was added as a numeric predictor, named "sentiment", ranging from -6 to 11.
+
+
+```{r, message=FALSE, warning=FALSE}
+
+### Perform LDA and sentiment analysis on the description
+
+corpus = tm::Corpus(tm::VectorSource(as.character(wine$description)))
+## transform corpus: remove white space and punctuation, transform to lower case, remove stop words, stem.
+corpus = tm::tm_map(corpus, stripWhitespace)
+corpus = tm::tm_map(corpus, removePunctuation)
+corpus = tm::tm_map(corpus, content_transformer(tolower))
+corpus = tm::tm_map(corpus, removeWords, stopwords("english"))
+# corpus = tm_map(corpus, removeWords, c("wine"))
+corpus = tm::tm_map(corpus, stemDocument)
+## create DocumentTerm matrix for LDA
+corpus_dtm = DocumentTermMatrix(corpus)
+
+NUM_TOPICS = 2
+
+corpus_lda = topicmodels::LDA(corpus_dtm, k = NUM_TOPICS, control = list(seed = 1234))
+corpus_documents = tidy(corpus_lda, matrix = "gamma")
+
+SENTIMENT_ENGINE = "bing"
+## Derive sentiment score
+corpus_sentiments <- tidy(corpus_dtm) %>%
+  inner_join(get_sentiments(SENTIMENT_ENGINE), by = c(term = "word")) %>%
+  count(document, sentiment, wt = count) %>%
+  ungroup() %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  arrange(sentiment)
+```
+
+```{r, message=FALSE, warning=FALSE}
+## introduce new predictors
+wine = data.frame(wine, topic1 = corpus_documents$gamma[1:nrow(wine)], document = rownames(wine))
+wine = merge(wine, corpus_sentiments[,c(1,4)], by = "document")
+wine = wine[complete.cases(wine[, c("points","price", "continentTopFive", "topic1", "sentiment")]), c("points","price", "continentTopFive", "topic1", "sentiment")]
+
+```
+
+- The resulting predictors after feature engineering are shown below, with 'points' as the response.
+- Because price ranges from 4 to 2300 USD, and is positive, ranging over 3 orders of magnitude, log(price) is used as a predictor instead of price.
+
+```{r, message=FALSE, warning=FALSE}
+names(wine)
+```
+
+**Training and Test Set Generation**
+
+We shuffled our data, then created an 80% training, 20% test split for later use in cross validation. We did 10 fold cross validation of every model. 
+
+```{r, message=FALSE, warning=FALSE}
+## REMOVE TEST SET = 20% of data.
+#Randomly shuffle the data
+wine = wine[sample(nrow(wine)),]
+
+# Sample 80% to training, 20% to test set.
+smp_size = floor(0.80 * nrow(wine))
+train_ind = sample(seq_len(nrow(wine)), size = smp_size)
+wine_train = wine[train_ind, ]
+wine_test = wine[-train_ind, ]
+# unit test the partitioning
+nrow(wine) == nrow(wine_test) + nrow(wine_train)
+```
+
+
+**Model Selection**
+
+
+**Model #1**
+
+- The model started with the base of: $log(points-79.999) \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
+- The optimal model after backward BIC selection was:  
+$log(points - 79.999) \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) +$  
+$log(price):continentTopFive + continentTopFive:topic1$
+
+
+```{r, message=FALSE, warning=FALSE}
+mod = lm(log(points-79.999) ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3), data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+
+# remove outliers and highly influential points and refit the *select*ed model
+keep = which(abs(resid(select)) <= 7 & cooks.distance(select) <= 4 / nrow(wine_train))
+
+select_formula1 = log(points - 79.999) ~ log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + continentTopFive:topic1
+mod1 = lm(select_formula1, data=wine_train, subset=keep)
+
+# Plot details and perform tests for homoscedasticity and normality of errors.
+plot(mod1)
+bptest(mod1)
+shapiro.test(sample(resid(mod1),5000))
+
+wine_train_cv = wine_train[keep,]
+
+RMSE1 = cv_mean_rmse(select_formula1, wine_train_cv, 10, function(x) {exp(x) + 79.999} )
+```
+
+- Outliers, in which the residual had magnitude over 7 points, were removed. Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE1`.
+
+
+**Model 2**
+
+
+- The model started with the base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
+- The optimal model after backward BIC selection was:  
+$points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) +$  
+$log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+
+```{r, message=FALSE, warning=FALSE}
+
+mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3), data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+# plot(select)
+# bptest(select)
+# shapiro.test(sample(resid(select),5000))
+
+#remove highly influential points
+keep = which(cooks.distance(select) <= 4 / nrow(wine_train))
+select_formula2 = points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1
+mod2 = lm(select_formula2, data=wine_train, subset=keep)
+plot(mod2)
+bptest(mod2)
+shapiro.test(sample(resid(mod2),5000))
+
+wine_train_cv = wine_train[keep,]
+
+RMSE2 = cv_mean_rmse(select_formula2, wine_train_cv, 10)
+```
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE2`.
+
+
+**Model 3**
+
+- The Box-Cox transform of the response was performed to try to counteract the indicated heteroskedasticity.
+- The model started with a base of: $bc\_points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
+- The optimal model after backward BIC selection was:  
+$bc\_points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive +$  
+$log(price):topic1 + continentTopFive:topic1$
+
+```{r, message=FALSE, warning=FALSE}
+bc_mod = caret::BoxCoxTrans(wine_train$points)
+
+wine_train = cbind(wine_train, bc_points = predict(bc_mod, wine_train$points))
+mod = lm(bc_points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3), data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+
+keep = cooks.distance(mod) <= 4 / nrow(wine_train)
+select_formula3 = bc_points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1
+
+mod3 = lm(select_formula3, data=wine_train, subset = keep)
+plot(mod3)
+bptest(mod3)
+shapiro.test(sample(resid(mod3),5000))
+
+### Perform 10 fold cross validation
+
+#Randomly shuffle the training set and create 10 folds
+wine_train_cv = wine_train[keep,]
+
+# see section 13.1.2 at http://daviddalpiaz.github.io/appliedstats/transformations.html#response-transformation
+RMSE3 = cv_mean_rmse(select_formula3, wine_train_cv, 10, function(x) {(x*bc_mod$lambda + 1)^(1/bc_mod$lambda)})
+```
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE3`.
+
+**Model 4**
+
+- Weighted least squares was performed, with weight being proportional to the inverse of the observed variance of points.  The observed variance of residuals peaks at `points = 90` and tapers to the ends of the points range.  The weight function therefore assumes its minimum at `points = 90` and increases at the ends of the range of points.
+- The weight function used: $weights = sqrt(1 / 1 + abs(points -90))$
+- The model started with a base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
+- The optimal model after backward BIC selection was:  
+$points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) +$  
+$log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+
+```{r, message=FALSE, warning=FALSE}
+mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3), data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+keep = cooks.distance(mod) <= 4 / nrow(wine_train)
+
+select_formula4 = points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
+    log(price):topic1 + continentTopFive:topic1
+mod4 = lm(select_formula4, data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
+
+plot(mod4)
+bptest(mod4)
+shapiro.test(sample(resid(mod4),5000))
+
+### Perform 10 fold cross validation
+
+#Randomly shuffle the training set and create 10 folds
+wine_train_cv = wine_train[keep,]
+
+RMSE4 = cv_mean_rmse(select_formula4, wine_train_cv, 10)
+```
+
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE4`.
+
+
+**Model 5**
+
+- The model started with the base of:
+  $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3) + I(log(price)^4) +$
+  $I(log(price)^5) + I(log(price)^6) + I(log(price)^7)$
+- The optimal model after backward BIC selection was:  
+$points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + I(log(price)^4) +$
+$I(log(price)^5) + I(log(price)^6) + I(log(price)^7) + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+
+```{r, message=FALSE, warning=FALSE}
+
+mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3) +
+           I(log(price)^4) + I(log(price)^5)  + I(log(price)^6) + I(log(price)^7), data=wine_train)
+select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
+
+#remove highly influential points
+keep = which(cooks.distance(select) <= 4 / nrow(wine_train))
+
+#update
+select_formula5 = points ~ log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) +
+  I(log(price)^4) + I(log(price)^5) + I(log(price)^6) + I(log(price)^7) + log(price):continentTopFive +
+  log(price):topic1 + continentTopFive:topic1
+mod5 = lm(select_formula5, data=wine_train, subset=keep)
+plot(mod5)
+bptest(mod5)
+shapiro.test(sample(resid(mod5),5000))
+
+wine_train_cv = wine_train[keep,]
+
+RMSE5 = cv_mean_rmse(select_formula5, wine_train_cv, 10)
+```
+
+- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
+- 10-fold cross-validation yielded a mean test RMSE of `r RMSE5`.
+
+
+
+### Results
+
+- 4 models were analyzed as candidates for optimal prediction of points.
+- For each, a base model was constructed and backward BIC selection was used to trim the model.
+- As seen by the plots and the BP and Shapiro-Wilk tests, normality of the errors is suspect, and heteroskedasticity is indicated for all models.  In particular, the variance seems highest for points around 90, and tapers to the extremes. Note however, that since Shapiro-Wilk in R can take a maximum of 5000 residuals, sampling was required, and this test is then dependent on the choice of random seed used in the sampling.
+- Many transforms (the 4 here, and not shown) were attempted in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
+- 10 fold cross-validation was performed on all models, with mean CV RMSE given as below.  
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+rmse_data = data.frame(rmse = c(RMSE1, RMSE2, RMSE3, RMSE4, RMSE5))
+colnames(rmse_data) = c("CV RMSE")
+rownames(rmse_data) = c("model1", "model2", "model3", "model4", "model5")
+
+best_model = which.min(rmse_data$`CV RMSE`)
+best_cv_rmse = round(rmse_data[best_model, 1],4)
+eqn1 = paste("$\\hat{y} \\pm 2*", best_cv_rmse, "$", sep = "")
+```
+
+```{r, echo=FALSE}
+rmse_data
+```
+
+
+- Model `r best_model` wins by minimal CV RMSE (`r best_cv_rmse`).
+- The CV RMSE can be used to construct prediction intervals, in lieu of analytic formulae based on normal and homoskedastic errors, as `r eqn1` for the prediction interval.
+
+```{r, message=FALSE, warning=FALSE}
+preds = predict(mod2, newdata=wine_test)
+success_ratio = sum(wine_test$points >= preds - 2*best_cv_rmse & wine_test$points <= preds + 2*best_cv_rmse) / nrow(wine_test)
+```
+
+- Using Model 2 with this prediction interval resulted in a success ratio of `r success_ratio` on the withheld test set (i.e. this percentage of the withheld test set points were within the prediction interval of Model #2).
+
+### Discussion
+
+We used four different strategies to attempt to meet the assumptions of multiple linear regression and minimize cross-validated RMSE. Attempts include transforming response with BoxCox and log, integrated polynomial models over the engineered features, and weighted least squares regression.  In the end, the non-transformed response model had the lowest cross-validated RMSE with a value of `r RMSE2`.
+
+Normality of the errors and homoscedasticity are suspect, as demonstrated by the Breusch-Pagan and Shapiro-Wilk tests and our plots. (Our low p-value on the Shapiro-Wilk tests indicates that our normality assumption is likely to be violated, and our low p-value on the Breusch-Pagan tests indicates that our equal variance assumption is likely violated. Similarly, the patterns we see on our Q-Q plots are indicative of heavy tails, and the patterns on our fitted vs. residuals plots indicate heteroskedasticity, as the variance is clearly largest around 90 and tapers to the extremes.) We tried many attempts to get normality and homoskedasticity (including additional less interesting attempts not shown here), but were not successful. (However, note that because Shapiro-Wilk in R can take only a maximum of 5000 residuals, sampling is required, and this test is then dependent on the choice of random seed used in the sampling. We found that if we moved the random seed around the test would sometimes pass.)
+
+Our goal here was prediction more than inference, so we're not too concerned with model complexity here -- we are aiming for predictive power. We get around the normality and homoskedastic assumptions by using cross-validated RMSE to create our prediction intervals.  Doing so gives a 94% success rate on the withheld test set with a +/- 4.8 point prediction interval (i.e. this percentage of the withheld test set points were within the prediction interval of Model #2).
+
+A note on model 4: weighted least squares was performed, with weight being proportional to the inverse of the observed variance of points. Since our observed variance of residuals peaked at `points = 90` and tapered to the ends of the points range, the weight function  assumes its minimum at `points = 90` and increases at the ends of the range of points. The weight function used was $weights = sqrt(1 / 1 + abs(points -90))$.
+
+Due to time constraints we were limited on creating more topics and evaluating their impact on the models. We did attempt to create LDA with 3 topics, but it didn't show as much improvement in the model performance. 
+
+**Potential for future improvements:**
+We limited ourselves to regression due to the nature of the course, but techniques such as random forests are an obvious next step. Additionally, this project could potentially be further expanded in the future by using deeper NLP, more LDA topics, additional predictors, and expanded model selection attempts. It may also be the case that the data is noisy, with a high base $\epsilon$ variance of points no matter which predictors are used (subjective human judgement after all). 
+
+
+### Appendix
+
+
+**About the LDA**
+
+- Since we did not want to wander too far into topic modelling of the wine descriptions, an LDA with only 2 topics was performed.  Future extension to this work should try to mine topics and sentiment further from the sommelier description, via NLP techniques.
+- Our LDA treatment relies on 2 references regarding the 'topicmodels' library of R:
+    - http://tidytextmining.com/topicmodeling.html
+    - https://cran.r-project.org/web/packages/topicmodels/vignettes/topicmodels.pdf
+- LDA with 2 topics creates 2 probability distributions of words discovered in the processed wine descriptions (after removing punctuation, white space, casting to lower case and stemming, which means taking word roots).  Each of these probability distributions is a "topic".  Each description receives a probability of coming from topic1, with the probability of coming from topic2 being 1 minus this value.  This probability of being generated from topic 1 is our "topic1" predictor.  Our "topic1" predictor remained significant as an additive and integrated predictor in all BIC reduced models.
+- The "beta" of a word in a topic is its probability within the topic probability distribution.  Below, topic 1 and topic 2 probabilities for various words are displayed, as is the log ratio of the topic probabilities for some words.
+
+```{r, message=FALSE, warning=FALSE}
+corpus_topics = tidy(corpus_lda, matrix = "beta")
+#corpus_topics
+corpus_top_terms = corpus_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+corpus_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) + ggtitle("Word Probabilities for the 2 Topics") +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+beta_spread = corpus_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+#beta_spread
+
+## Plot the beta spread of the topics
+ggplot(beta_spread[order(abs(beta_spread$log_ratio)),][1:30,], aes(x=term, y=log_ratio)) + geom_bar(stat="identity", fill="green", width=.2) + coord_flip() + ggtitle("Log ratio of word probabilities in topic2/topic1")
+```
+
+
+
+
