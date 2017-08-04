@@ -335,7 +335,6 @@ wine_train_cv = wine_train[keep,]
 RMSE3 = cv_mean_rmse(select_formula3, wine_train_cv, 10, function(x) {(x*bc_mod$lambda + 1)^(1/bc_mod$lambda)})
 ```
 
-- Highly influential points were removed and the model was refit. `r nrow(wine_train) - length(keep)` observations were removed in total.
 - 10-fold cross-validation yielded a mean test RMSE of `r RMSE3`.
 
 **Model 4**
@@ -413,10 +412,10 @@ RMSE5 = cv_mean_rmse(select_formula5, wine_train_cv, 10)
 
 ### Results
 
-- 4 models were analyzed as candidates for optimal prediction of points.
+- 5 models were analyzed as candidates for optimal prediction of points.
 - For each, a base model was constructed and backward BIC selection was used to trim the model.
 - As seen by the plots and the BP and Shapiro-Wilk tests, normality of the errors is suspect, and heteroskedasticity is indicated for all models.  In particular, the variance seems highest for points around 90, and tapers to the extremes. Note however, that since Shapiro-Wilk in R can take a maximum of 5000 residuals, sampling was required, and this test is then dependent on the choice of random seed used in the sampling.
-- Many transforms (the 4 here, and not shown) were attempted in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
+- Many transforms (the 5 here, and not shown) were attempted in order to overcome these violations of the assumptions of multiple linear regression by least squares minimization.
 - 10 fold cross-validation was performed on all models, with mean CV RMSE given as below.  
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 rmse_data = data.frame(rmse = c(RMSE1, RMSE2, RMSE3, RMSE4, RMSE5))
@@ -445,7 +444,7 @@ success_ratio = sum(wine_test$points >= preds - 2*best_cv_rmse & wine_test$point
 
 ### Discussion
 
-We used four different strategies to attempt to meet the assumptions of multiple linear regression and minimize cross-validated RMSE. Attempts include transforming response with BoxCox and log, integrated polynomial models over the engineered features, and weighted least squares regression.  In the end, the non-transformed response model had the lowest cross-validated RMSE with a value of `r RMSE2`.
+We used five different strategies to attempt to meet the assumptions of multiple linear regression and minimize cross-validated RMSE. Attempts include transforming response with BoxCox and log, integrated polynomial models over the engineered features, and weighted least squares regression.  In the end, the non-transformed response model had the lowest cross-validated RMSE with a value of `r RMSE2`.
 
 Normality of the errors and homoscedasticity are suspect, as demonstrated by the Breusch-Pagan and Shapiro-Wilk tests and our plots. (Our low p-value on the Shapiro-Wilk tests indicates that our normality assumption is likely to be violated, and our low p-value on the Breusch-Pagan tests indicates that our equal variance assumption is likely violated. Similarly, the patterns we see on our Q-Q plots are indicative of heavy tails, and the patterns on our fitted vs. residuals plots indicate heteroskedasticity, as the variance is clearly largest around 90 and tapers to the extremes.) We tried many attempts to get normality and homoskedasticity (including additional less interesting attempts not shown here), but were not successful. (However, note that because Shapiro-Wilk in R can take only a maximum of 5000 residuals, sampling is required, and this test is then dependent on the choice of random seed used in the sampling. We found that if we moved the random seed around the test would sometimes pass.)
 
