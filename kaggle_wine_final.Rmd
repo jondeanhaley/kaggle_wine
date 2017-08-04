@@ -376,7 +376,7 @@ colnames(rmse_data) = c("CV RMSE")
 rownames(rmse_data) = c("model1", "model2", "model3", "model4")
 
 best_model = which.min(rmse_data$`CV RMSE`)
-best_cv_rmse = rmse_data[best_model, 1]
+best_cv_rmse = round(rmse_data[best_model, 1],4)
 eqn1 = paste("$\\hat{y} \\pm 2*", best_cv_rmse, "$", sep = "")
 ```
 
