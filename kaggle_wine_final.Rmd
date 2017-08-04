@@ -389,8 +389,8 @@ select_formula5 = points ~ log(price) + continentTopFive + topic1 +
     I(log(price)^6) + I(log(price)^7) + log(price):continentTopFive + 
     log(price):topic1 + continentTopFive:topic1
 mod5 = lm(select_formula5, data=wine_train, subset=keep)
-plot(mod2)
-bptest(mod2)
+plot(mod5)
+bptest(mod5)
 shapiro.test(sample(resid(mod5),5000))
 
 wine_train_cv = wine_train[keep,]
