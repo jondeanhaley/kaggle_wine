@@ -438,6 +438,8 @@ success_ratio = sum(wine_test$points >= preds - 2*best_cv_rmse & wine_test$point
 
 ### Discussion
 
+The goal of this project, as well as the kaggle competition (from where we got the data) was to see if the `wine points` could be predicted accurately as against trying to explain what determins the `wine points`. Although we used linear regression models in this project, one could argue that use of tree enseble based models such as GBM or random forest may be better at this task.
+
 We used four different strategies to attempt to meet the assumptions of multiple linear regression and minimize cross-validated RMSE. Attempts include transforming response with BoxCox and log, integrated polynomial models over the engineered features, and weighted least squares regression.  In the end, the non-transformed response model had the lowest cross-validated RMSE with a value of `r RMSE2`.
 
 Normality of the errors and homoskedasticity are suspect, as demonstrated by the Breusch-Pagan and Shapiro-Wilk tests. we tried many attempts to get normality and homoskedasticity (including additional less interesting attempts not shown here), but were not successful. We see that the variance seems highest for points around 90, and tapers to the extremes. However, because Shapiro-Wilk in R can take only a maximum of 5000 residuals, sampling is required, and this test is then dependent on the choice of random seed used in the sampling.
@@ -445,6 +447,8 @@ Normality of the errors and homoskedasticity are suspect, as demonstrated by the
 We get around the normal and homoskedastic assumptions by using cross-validated RMSE to create our prediction intervals.  Doing so gives a 94% success rate on the withheld test set with a +/- 4.8 point prediction interval.  
 
 **Potential for future improvements:**
+Due to time constraints we couldn't really work on creating more topics and evaluating their impact on the models. Trying to create LDA with 3 topics didn't show as much improvement in the model performance. One could consider spending time to create more number of topics in the future.
+
 This project could potentially be further expanded in the future by using deeper NLP, expanding with additional predictors, and expanded model selection attempts. It may also be the case that the data is noisy, with a high base $\epsilon$ variance of points no matter which predictors are used.  (subjective human judgement after all).
 
 ### Appendix
