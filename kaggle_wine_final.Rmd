@@ -233,7 +233,7 @@ nrow(wine) == nrow(wine_test) + nrow(wine_train)
 **Model #1**
 
 - The model started with the base of: $log(points-79.999) \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
-- The optimal model after backward BIC selection was:  $log(points - 79.999) \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + continentTopFive:topic1$
+- The optimal model after backward BIC selection was:  $log(points - 79.999) \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + continentTopFive:topic1$
 
 
 ```{r, message=FALSE, warning=FALSE}
@@ -246,8 +246,9 @@ select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 # remove outliers and highly influential points and refit the *select*ed model
 keep = which(abs(resid(select)) <= 7 & cooks.distance(select) <= 4 / nrow(wine_train))
 
-select_formula1 = log(points - 79.999) ~ log(price) + continentTopFive + topic1 + 
-    log(price):continentTopFive + continentTopFive:topic1
+select_formula1 = log(points - 79.999) ~ log(price) + continentTopFive + 
+    topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
+    continentTopFive:topic1
 mod1 = lm(select_formula1, data=wine_train, subset=keep)
 
 # Plot details and perform tests for homoscedasticity and normality of errors.
@@ -268,7 +269,7 @@ RMSE1 = cv_mean_rmse(select_formula1, wine_train_cv, 10, function(x) {exp(x) + 7
 
 
 - The model started with the base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
-- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
 
 ```{r, message=FALSE, warning=FALSE}
 
@@ -280,7 +281,8 @@ select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 
 #remove highly influential points
 keep = which(cooks.distance(select) <= 4 / nrow(wine_train))
-select_formula2 = points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+select_formula2 = points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
     log(price):topic1 + continentTopFive:topic1
 mod2 = lm(select_formula2, data=wine_train, subset=keep)
 plot(mod2)
@@ -300,7 +302,7 @@ RMSE2 = cv_mean_rmse(select_formula2, wine_train_cv, 10)
 
 - The Box-Cox transform of the response was performed to try to counteract the indicated heteroskedasticity.
 - The model started with a base of: $bc\_points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
-- The optimal model after backward BIC selection was:  $bc\_points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+- The optimal model after backward BIC selection was:  $bc\_points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
 
 ```{r, message=FALSE, warning=FALSE}
 bc_mod = caret::BoxCoxTrans(wine_train$points)
@@ -310,7 +312,8 @@ mod = lm(bc_points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)
 select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 
 keep = cooks.distance(mod) <= 4 / nrow(wine_train)
-select_formula3 = bc_points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+select_formula3 = bc_points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
     log(price):topic1 + continentTopFive:topic1
 
 mod3 = lm(select_formula3, data=wine_train, subset = keep)
@@ -335,14 +338,15 @@ RMSE3 = cv_mean_rmse(select_formula3, wine_train_cv, 10, function(x) {(x*bc_mod$
 - Weighted least squares was performed, with weight being proportional to the inverse of the observed variance of points.  The observed variance of residuals peaks at points = 90 and tapers to the ends of the points range.  The weight function therefore assumes its minimum at points = 90 and increases at the ends of the range of points.
 - The weight function used: $weights = sqrt(1 / 1 + abs(points -90))$
 - The model started with a base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3)$
-- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
 
 ```{r, message=FALSE, warning=FALSE}
 mod = lm(points ~ log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3), data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
 select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 keep = cooks.distance(mod) <= 4 / nrow(wine_train)
 
-select_formula4 = points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+select_formula4 = points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + log(price):continentTopFive + 
     log(price):topic1 + continentTopFive:topic1
 mod4 = lm(select_formula4, data=wine_train, subset = keep, weights = sqrt(1 / 1 + abs(points -90)))
 
@@ -366,7 +370,7 @@ RMSE4 = cv_mean_rmse(select_formula4, wine_train_cv, 10)
 **Model 5**
 
 - The model started with the base of: $points \sim log(price)*continentTopFive*sentiment*topic1 + I(log(price)^2) + I(log(price)^3) + I(log(price)^4) + I(log(price)^5) + I(log(price)^6) + I(log(price)^7)$
-- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
+- The optimal model after backward BIC selection was:  $points \sim log(price) + continentTopFive + topic1 + I(log(price)^2) + I(log(price)^3) + I(log(price)^4) + I(log(price)^5) + I(log(price)^6) + I(log(price)^7) + log(price):continentTopFive + log(price):topic1 + continentTopFive:topic1$
 
 ```{r, message=FALSE, warning=FALSE}
 
@@ -380,7 +384,9 @@ select = step(mod, direction="backward", k=log(nrow(wine_train)), trace=FALSE)
 keep = which(cooks.distance(select) <= 4 / nrow(wine_train))
 
 #update
-select_formula5 = points ~ log(price) + continentTopFive + topic1 + log(price):continentTopFive + 
+select_formula5 = points ~ log(price) + continentTopFive + topic1 + 
+    I(log(price)^2) + I(log(price)^3) + I(log(price)^4) + I(log(price)^5) + 
+    I(log(price)^6) + I(log(price)^7) + log(price):continentTopFive + 
     log(price):topic1 + continentTopFive:topic1
 mod5 = lm(select_formula5, data=wine_train, subset=keep)
 plot(mod2)
